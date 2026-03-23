@@ -1,0 +1,86 @@
+{
+  "schema_version": "1.0.0",
+  "metadata": {
+    "source_language": "haskell",
+    "compiler_version": "ghc-9.14.1",
+    "source_file": "Factorial.hs",
+    "shim_version": "0.1.0"
+  },
+  "module": {
+    "name": "Factorial",
+    "exports": ["factorial", "main"],
+    "definitions": [
+      {
+        "name": {"module": "Factorial", "name": {"text": "factorial", "unique": 1}},
+        "type": {
+          "fn": {
+            "args": [{"multiplicity": "many", "type": {"con": {"qname": {"module": "std", "name": {"text": "int"}}}}}],
+            "effect": {"effects": []},
+            "result": {"con": {"qname": {"module": "std", "name": {"text": "int"}}}}
+          }
+        },
+        "expr": {
+          "elam": {
+            "params": [{"name": {"text": "n", "unique": 2}, "type": {"con": {"qname": {"module": "std", "name": {"text": "int"}}}}}],
+            "body": {
+              "ecase": {
+                "scrutinee": {"evar": {"text": "n", "unique": 2}},
+                "branches": [
+                  {
+                    "pattern": {"pat_lit": {"int": 0}},
+                    "body": {"elit": {"int": 1}}
+                  },
+                  {
+                    "pattern": {"pat_var": {"name": {"text": "n", "unique": 2}, "type": {"con": {"qname": {"module": "std", "name": {"text": "int"}}}}}},
+                    "body": {
+                      "eapp": {
+                        "fn": {"evar": {"text": "*", "unique": 0}},
+                        "args": [
+                          {"evar": {"text": "n", "unique": 2}},
+                          {"eapp": {
+                            "fn": {"evar": {"text": "factorial", "unique": 1}},
+                            "args": [{"eapp": {
+                              "fn": {"evar": {"text": "-", "unique": 0}},
+                              "args": [{"evar": {"text": "n", "unique": 2}}, {"elit": {"int": 1}}]
+                            }}]
+                          }}
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "sort": "fun",
+        "visibility": "public"
+      },
+      {
+        "name": {"module": "Factorial", "name": {"text": "main", "unique": 10}},
+        "type": {
+          "fn": {
+            "args": [],
+            "effect": {"effects": [{"module": "std", "name": {"text": "io"}}]},
+            "result": {"con": {"qname": {"module": "std", "name": {"text": "unit"}}}}
+          }
+        },
+        "expr": {
+          "edelay": {
+            "eapp": {
+              "fn": {"evar": {"text": "print", "unique": 0}},
+              "args": [{"eapp": {
+                "fn": {"evar": {"text": "factorial", "unique": 1}},
+                "args": [{"elit": {"int": 10}}]
+              }}]
+            }
+          }
+        },
+        "sort": "fun",
+        "visibility": "public"
+      }
+    ],
+    "data_types": [],
+    "effect_decls": []
+  }
+}

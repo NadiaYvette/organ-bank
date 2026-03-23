@@ -1,0 +1,30 @@
+# Haskell / Cabal
+dist-newstyle/
+*.o
+*.hi
+*.dyn_o
+*.dyn_hi
+.ghc.environment.*
+
+# Rust / Cargo
+target/
+Cargo.lock
+
+# Lean 4 / Lake
+.lake/
+build/
+
+# Mercury
+*.err
+*.mh
+Mercury/
+*.hlds_dump
+
+# Editor
+*~
+*.swp
+.vscode/
+.idea/
+
+# OS
+.DS_Store

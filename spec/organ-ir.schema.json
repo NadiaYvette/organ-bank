@@ -1,0 +1,553 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/NadiaYvette/organ-bank/spec/organ-ir.schema.json",
+  "title": "OrganIR",
+  "description": "Stable interchange format for post-erasure compiler intermediate representations. Used by organ-bank shims to extract IR from donor compilers (GHC, rustc, mmc, idris2, lean4) for consumption by Frankenstein.",
+  "type": "object",
+  "required": ["schema_version", "metadata", "module"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "description": "Semantic version of the OrganIR schema. Major = breaking, minor = additive, patch = clarification."
+    },
+    "metadata": { "$ref": "#/$defs/metadata" },
+    "module": { "$ref": "#/$defs/module" }
+  },
+  "additionalProperties": false,
+
+  "$defs": {
+    "metadata": {
+      "type": "object",
+      "required": ["source_language", "shim_version"],
+      "properties": {
+        "source_language": {
+          "type": "string",
+          "enum": ["haskell", "rust", "mercury", "idris2", "lean4", "koka"]
+        },
+        "compiler_version": { "type": "string" },
+        "source_file": { "type": "string" },
+        "shim_version": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "additionalProperties": false
+    },
+
+    "module": {
+      "type": "object",
+      "required": ["name", "definitions"],
+      "properties": {
+        "name": { "type": "string" },
+        "exports": { "type": "array", "items": { "type": "string" } },
+        "definitions": { "type": "array", "items": { "$ref": "#/$defs/definition" } },
+        "data_types": { "type": "array", "items": { "$ref": "#/$defs/data_type" } },
+        "effect_decls": { "type": "array", "items": { "$ref": "#/$defs/effect_decl" } }
+      },
+      "additionalProperties": false
+    },
+
+    "qname": {
+      "type": "object",
+      "required": ["module", "name"],
+      "properties": {
+        "module": { "type": "string" },
+        "name": { "$ref": "#/$defs/name" }
+      },
+      "additionalProperties": false
+    },
+
+    "name": {
+      "type": "object",
+      "required": ["text"],
+      "properties": {
+        "text": { "type": "string" },
+        "unique": { "type": "integer" }
+      },
+      "additionalProperties": false
+    },
+
+    "definition": {
+      "type": "object",
+      "required": ["name", "type", "expr", "sort", "visibility"],
+      "properties": {
+        "name": { "$ref": "#/$defs/qname" },
+        "type": { "$ref": "#/$defs/type" },
+        "expr": { "$ref": "#/$defs/expr" },
+        "sort": { "type": "string", "enum": ["fun", "val", "external"] },
+        "visibility": { "type": "string", "enum": ["public", "private"] },
+        "_mir_blocks": { "type": "integer" },
+        "_mir_locals": { "type": "integer" }
+      },
+      "additionalProperties": false
+    },
+
+    "type": {
+      "description": "Tagged union via single-key object. Exactly one key must be present.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["forall"],
+          "properties": {
+            "forall": {
+              "type": "object",
+              "required": ["vars", "body"],
+              "properties": {
+                "vars": { "type": "array", "items": { "$ref": "#/$defs/type_var" } },
+                "body": { "$ref": "#/$defs/type" }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["fn"],
+          "properties": {
+            "fn": {
+              "type": "object",
+              "required": ["args", "effect", "result"],
+              "properties": {
+                "args": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["type"],
+                    "properties": {
+                      "multiplicity": { "type": "string", "enum": ["many", "affine", "linear"] },
+                      "type": { "$ref": "#/$defs/type" }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "effect": { "$ref": "#/$defs/effect_row" },
+                "result": { "$ref": "#/$defs/type" }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["app"],
+          "properties": {
+            "app": {
+              "type": "object",
+              "required": ["con", "args"],
+              "properties": {
+                "con": { "$ref": "#/$defs/qname" },
+                "args": { "type": "array", "items": { "$ref": "#/$defs/type" } }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["con"],
+          "properties": {
+            "con": {
+              "type": "object",
+              "required": ["qname"],
+              "properties": {
+                "qname": { "$ref": "#/$defs/qname" }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["var"],
+          "properties": {
+            "var": { "$ref": "#/$defs/name" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["syn"],
+          "properties": {
+            "syn": {
+              "type": "object",
+              "required": ["name", "expansion"],
+              "properties": {
+                "name": { "$ref": "#/$defs/qname" },
+                "expansion": { "$ref": "#/$defs/type" }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+
+    "type_var": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": { "$ref": "#/$defs/name" },
+        "kind": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+
+    "effect_row": {
+      "type": "object",
+      "required": ["effects"],
+      "properties": {
+        "effects": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/qname" }
+        },
+        "tail": { "$ref": "#/$defs/name" }
+      },
+      "additionalProperties": false
+    },
+
+    "expr": {
+      "description": "Tagged union via single-key object. Exactly one key must be present.",
+      "oneOf": [
+        {
+          "type": "object", "required": ["evar"],
+          "properties": { "evar": { "$ref": "#/$defs/name" } },
+          "additionalProperties": false
+        },
+        {
+          "type": "object", "required": ["elit"],
+          "properties": {
+            "elit": {
+              "oneOf": [
+                { "type": "object", "required": ["int"], "properties": { "int": { "type": "integer" } }, "additionalProperties": false },
+                { "type": "object", "required": ["float"], "properties": { "float": { "type": "number" } }, "additionalProperties": false },
+                { "type": "object", "required": ["string"], "properties": { "string": { "type": "string" } }, "additionalProperties": false },
+                { "type": "object", "required": ["bool"], "properties": { "bool": { "type": "boolean" } }, "additionalProperties": false }
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object", "required": ["econ"],
+          "properties": {
+            "econ": {
+              "type": "object",
+              "required": ["name"],
+              "properties": {
+                "name": { "$ref": "#/$defs/qname" },
+                "args": { "type": "array", "items": { "$ref": "#/$defs/expr" } }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object", "required": ["eapp"],
+          "properties": {
+            "eapp": {
+              "type": "object",
+              "required": ["fn", "args"],
+              "properties": {
+                "fn": { "$ref": "#/$defs/expr" },
+                "args": { "type": "array", "items": { "$ref": "#/$defs/expr" } }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object", "required": ["elam"],
+          "properties": {
+            "elam": {
+              "type": "object",
+              "required": ["params", "body"],
+              "properties": {
+                "params": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["name"],
+                    "properties": {
+                      "name": { "$ref": "#/$defs/name" },
+                      "type": { "$ref": "#/$defs/type" }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "body": { "$ref": "#/$defs/expr" }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object", "required": ["elet"],
+          "properties": {
+            "elet": {
+              "type": "object",
+              "required": ["binds", "body"],
+              "properties": {
+                "binds": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["name", "expr"],
+                    "properties": {
+                      "name": { "$ref": "#/$defs/name" },
+                      "type": { "$ref": "#/$defs/type" },
+                      "expr": { "$ref": "#/$defs/expr" }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "body": { "$ref": "#/$defs/expr" }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object", "required": ["ecase"],
+          "properties": {
+            "ecase": {
+              "type": "object",
+              "required": ["scrutinee", "branches"],
+              "properties": {
+                "scrutinee": { "$ref": "#/$defs/expr" },
+                "branches": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["pattern", "body"],
+                    "properties": {
+                      "pattern": { "$ref": "#/$defs/pattern" },
+                      "body": { "$ref": "#/$defs/expr" }
+                    },
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object", "required": ["etype_app"],
+          "properties": {
+            "etype_app": {
+              "type": "object",
+              "required": ["expr", "types"],
+              "properties": {
+                "expr": { "$ref": "#/$defs/expr" },
+                "types": { "type": "array", "items": { "$ref": "#/$defs/type" } }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object", "required": ["etype_lam"],
+          "properties": {
+            "etype_lam": {
+              "type": "object",
+              "required": ["vars", "body"],
+              "properties": {
+                "vars": { "type": "array", "items": { "$ref": "#/$defs/type_var" } },
+                "body": { "$ref": "#/$defs/expr" }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object", "required": ["eperform"],
+          "properties": {
+            "eperform": {
+              "type": "object",
+              "required": ["effect", "op"],
+              "properties": {
+                "effect": { "$ref": "#/$defs/qname" },
+                "op": { "type": "string" },
+                "args": { "type": "array", "items": { "$ref": "#/$defs/expr" } }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object", "required": ["ehandle"],
+          "properties": {
+            "ehandle": {
+              "type": "object",
+              "required": ["effect", "body", "handler"],
+              "properties": {
+                "effect": { "$ref": "#/$defs/qname" },
+                "body": { "$ref": "#/$defs/expr" },
+                "handler": { "$ref": "#/$defs/expr" }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object", "required": ["eretain"],
+          "properties": { "eretain": { "$ref": "#/$defs/name" } },
+          "additionalProperties": false
+        },
+        {
+          "type": "object", "required": ["erelease"],
+          "properties": { "erelease": { "$ref": "#/$defs/name" } },
+          "additionalProperties": false
+        },
+        {
+          "type": "object", "required": ["edrop"],
+          "properties": { "edrop": { "$ref": "#/$defs/name" } },
+          "additionalProperties": false
+        },
+        {
+          "type": "object", "required": ["ereuse"],
+          "properties": { "ereuse": { "$ref": "#/$defs/name" } },
+          "additionalProperties": false
+        },
+        {
+          "type": "object", "required": ["edelay"],
+          "properties": { "edelay": { "$ref": "#/$defs/expr" } },
+          "additionalProperties": false
+        },
+        {
+          "type": "object", "required": ["eforce"],
+          "properties": { "eforce": { "$ref": "#/$defs/expr" } },
+          "additionalProperties": false
+        }
+      ]
+    },
+
+    "pattern": {
+      "description": "Case branch patterns.",
+      "oneOf": [
+        {
+          "type": "object", "required": ["pat_con"],
+          "properties": {
+            "pat_con": {
+              "type": "object",
+              "required": ["name"],
+              "properties": {
+                "name": { "$ref": "#/$defs/qname" },
+                "args": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["name"],
+                    "properties": {
+                      "name": { "$ref": "#/$defs/name" },
+                      "type": { "$ref": "#/$defs/type" }
+                    },
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object", "required": ["pat_lit"],
+          "properties": {
+            "pat_lit": {
+              "oneOf": [
+                { "type": "object", "required": ["int"], "properties": { "int": { "type": "integer" } }, "additionalProperties": false },
+                { "type": "object", "required": ["float"], "properties": { "float": { "type": "number" } }, "additionalProperties": false },
+                { "type": "object", "required": ["string"], "properties": { "string": { "type": "string" } }, "additionalProperties": false },
+                { "type": "object", "required": ["bool"], "properties": { "bool": { "type": "boolean" } }, "additionalProperties": false }
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object", "required": ["pat_var"],
+          "properties": {
+            "pat_var": {
+              "type": "object",
+              "required": ["name"],
+              "properties": {
+                "name": { "$ref": "#/$defs/name" },
+                "type": { "$ref": "#/$defs/type" }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object", "required": ["pat_wild"],
+          "properties": {
+            "pat_wild": { "type": "object", "additionalProperties": false }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+
+    "data_type": {
+      "type": "object",
+      "required": ["name", "constructors"],
+      "properties": {
+        "name": { "$ref": "#/$defs/qname" },
+        "type_params": { "type": "array", "items": { "$ref": "#/$defs/type_var" } },
+        "constructors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "fields"],
+            "properties": {
+              "name": { "$ref": "#/$defs/qname" },
+              "fields": {
+                "type": "array",
+                "items": { "$ref": "#/$defs/type" }
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+
+    "effect_decl": {
+      "type": "object",
+      "required": ["name", "operations"],
+      "properties": {
+        "name": { "$ref": "#/$defs/qname" },
+        "type_params": { "type": "array", "items": { "$ref": "#/$defs/type_var" } },
+        "operations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "type"],
+            "properties": {
+              "name": { "type": "string" },
+              "type": { "$ref": "#/$defs/type" }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

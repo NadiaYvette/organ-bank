@@ -1,0 +1,8 @@
+[package]
+name = "rustc-organ"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "rustc-organ"
+path = "src/main.rs"
