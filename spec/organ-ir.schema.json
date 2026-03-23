@@ -23,7 +23,7 @@
       "properties": {
         "source_language": {
           "type": "string",
-          "enum": ["haskell", "rust", "mercury", "idris2", "lean4", "koka"]
+          "enum": ["haskell", "rust", "mercury", "idris2", "lean4", "koka", "ocaml", "swift", "erlang", "purescript"]
         },
         "compiler_version": { "type": "string" },
         "source_file": { "type": "string" },

@@ -1,0 +1,20 @@
+cabal-version: 3.0
+name:          erlc-shim
+version:       0.1.0
+synopsis:      Extract Core Erlang and emit OrganIR JSON
+license:       GPL-2.0-only
+build-type:    Simple
+
+executable erlc-organ
+  default-language: GHC2024
+  default-extensions: OverloadedStrings
+  hs-source-dirs: src
+  main-is: Main.hs
+  other-modules: OrganBank.ErlcShim
+  build-depends:
+    base >= 4.20 && < 5,
+    text,
+    process,
+    containers,
+    filepath
+  ghc-options: -Wall

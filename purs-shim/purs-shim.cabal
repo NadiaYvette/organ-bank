@@ -1,0 +1,25 @@
+cabal-version:   3.0
+name:            purs-shim
+version:         0.1.0.0
+synopsis:        PureScript CoreFn extraction shim for OrganIR
+license:         GPL-2.0-only
+build-type:      Simple
+
+common defaults
+  default-language: GHC2024
+  default-extensions: OverloadedStrings
+  ghc-options: -Wall
+
+executable purs-organ
+  import: defaults
+  main-is: Main.hs
+  hs-source-dirs: src
+  other-modules: OrganBank.PursShim
+  build-depends:
+      base >= 4.20
+    , text
+    , bytestring
+    , process
+    , filepath
+    , directory
+    , containers

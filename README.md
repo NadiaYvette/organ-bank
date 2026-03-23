@@ -11,11 +11,11 @@ single compiled program.
 ## The Metaphor
 
 Frankenstein is a polyglot compiler that consumes code written in Haskell,
-Rust, Mercury, Idris 2, and Lean 4. Rather than writing five parsers and
-five type checkers, Frankenstein reuses the real compilers as donors. Organ
-Bank is the harvesting facility: it extracts the typed, analyzed IR from
-each compiler's guts and packages it in a uniform format that Frankenstein's
-MLIR backend can consume.
+Rust, Mercury, Idris 2, Lean 4, OCaml, Erlang/Elixir, PureScript, Koka,
+and Swift. Rather than writing ten parsers and ten type checkers, Frankenstein
+reuses the real compilers as donors. Organ Bank is the harvesting facility:
+it extracts the typed, analyzed IR from each compiler's guts and packages it
+in a uniform format that Frankenstein's MLIR backend can consume.
 
 The organs:
 
@@ -23,16 +23,21 @@ The organs:
 - **rustc-shim** -- MIR with ownership and borrow information
 - **mmc-shim** -- Mercury HLDS with mode/determinism analysis
 - **idris2-shim** -- Idris 2 case trees from `--dumpcases`
-- **lean4-shim** -- Lean 4 LCNF from a compiler plugin
+- **lean4-shim** -- Lean 4 LCNF from a real compiler plugin
+- **erlc-shim** -- Core Erlang (covers Erlang + Elixir + Gleam)
+- **purs-shim** -- PureScript CoreFn from `--dump-corefn` (JSON)
+- **ocaml-shim** -- OCaml Lambda IR from `-dlambda`
+- **koka-shim** -- Koka Core from `--showcore`
+- **swift-shim** -- Swift SIL from `-emit-sil`
 
 ## Architecture
 
 ```
-  Source file (.hs, .rs, .m, .idr, .lean)
+  Source file (.hs, .rs, .m, .idr, .lean, .erl, .purs, .ml, .kk, .swift)
        |
        v
-  [Real Compiler Frontend]   <-- ghc, rustc, mmc, idris2, lean4
-       |
+  [Real Compiler Frontend]   <-- ghc, rustc, mmc, idris2, lean4,
+       |                         erlc, purs, ocamlopt, koka, swiftc
        v
   [Organ Bank Shim]          <-- this project
        |
@@ -40,7 +45,7 @@ The organs:
   OrganIR JSON on stdout     <-- spec/organ-ir.schema.json
        |
        v
-  [Frankenstein]              <-- /home/nyc/src/frankenstein/
+  [Frankenstein]              <-- github.com/NadiaYvette/frankenstein
        |
        v
   MLIR -> LLVM -> native binary
@@ -57,44 +62,66 @@ OrganIR is a JSON format that captures:
 - **Module metadata**: source language, compiler version, file path
 - **Definitions**: functions with typed parameters, bodies as expression trees
 - **Types**: using a tiered interop type system (see `spec/interop-types.md`)
+- **Effects**: algebraic effect rows from Koka/Mercury, IO effects, exception effects
 - **Exports**: which definitions are visible to other modules
 
-See `spec/organ-ir-example.json` for a concrete example.
+See `spec/organ-ir-example.json` for a concrete example and
+`spec/organ-ir.schema.json` for the full JSON Schema.
 
 ## Shim Status
 
-| Shim | Language | Status | Notes |
-|------|----------|--------|-------|
-| ghc-shim | Haskell | Skeleton | GHC API extraction, based on Frankenstein GhcBridge |
-| rustc-shim | Rust | Skeleton | rustc_private callbacks, based on Frankenstein rustc-shim |
-| mmc-shim | Haskell | Skeleton | Parses `mmc --dump-hlds 50` output |
-| idris2-shim | Haskell | Skeleton | Parses `idris2 --dumpcases` output |
-| lean4-shim | Lean 4 | Placeholder | Needs Lean 4 compiler plugin for LCNF access |
+| Shim | Language | Compiler IR | Access Method | Status |
+|------|----------|-------------|---------------|--------|
+| ghc-shim | Haskell | GHC Core | GHC API (`runGhc`) | Working |
+| rustc-shim | Rust | MIR | `rustc_private` callbacks | Working |
+| mmc-shim | Mercury | HLDS | `mmc --dump-hlds 50` | Working |
+| idris2-shim | Idris 2 | Case trees | `idris2 --dumpcases` | Working |
+| lean4-shim | Lean 4 | LCNF | Compiler plugin (`baseExt`) | Working |
+| erlc-shim | Erlang | Core Erlang | `erlc +to_core` | Working |
+| purs-shim | PureScript | CoreFn | `purs compile --dump-corefn` | Working |
+| ocaml-shim | OCaml | Lambda | `ocamlopt -dlambda` | Working |
+| koka-shim | Koka | Core | `koka --showcore` | Working |
+| swift-shim | Swift | SIL | `swiftc -emit-sil` | Working |
 
 ## Building
 
 Each shim has its own build system:
 
 ```bash
-# GHC shim (requires GHC 9.14.*)
+# GHC shim (requires GHC 9.14+)
 cd ghc-shim && cabal build
 
 # Rustc shim (requires nightly + rustc-dev)
 cd rustc-shim && cargo build
 
-# MMC shim
+# MMC shim (requires mmc on PATH)
 cd mmc-shim && cabal build
 
-# Idris 2 shim
+# Idris 2 shim (requires idris2 on PATH)
 cd idris2-shim && cabal build
 
-# Lean 4 shim
+# Lean 4 shim (requires Lean 4.16+)
 cd lean4-shim && lake build
+
+# Core Erlang shim (requires erlc on PATH)
+cd erlc-shim && cabal build
+
+# PureScript shim (requires purs on PATH)
+cd purs-shim && cabal build
+
+# OCaml shim (requires ocamlopt on PATH)
+cd ocaml-shim && cabal build
+
+# Koka shim (requires koka on PATH)
+cd koka-shim && cabal build
+
+# Swift shim (requires swiftc on PATH)
+cd swift-shim && cabal build
 ```
 
 ## Relationship to Frankenstein
 
-Organ Bank is a companion project to the [Frankenstein polyglot compiler](../frankenstein/).
+Organ Bank is a companion project to the [Frankenstein polyglot compiler](https://github.com/NadiaYvette/frankenstein).
 Frankenstein currently has extraction code embedded in its own source tree
 (`GhcBridge/`, `RustBridge/`, `MercuryBridge/`). Organ Bank factors this
 out into standalone, reusable shims with a stable JSON interface, so that:
