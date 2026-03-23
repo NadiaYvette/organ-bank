@@ -1,0 +1,23 @@
+cabal-version:   3.0
+name:            scala3-shim
+version:         0.1.0.0
+synopsis:        Scala 3 erasure tree extraction shim for OrganIR
+license:         GPL-2.0-only
+build-type:      Simple
+
+common defaults
+  default-language: GHC2024
+  default-extensions: OverloadedStrings
+  ghc-options: -Wall
+
+executable scala3-organ
+  import: defaults
+  main-is: Main.hs
+  hs-source-dirs: src
+  other-modules: OrganBank.Scala3Shim
+  build-depends:
+      base >= 4.20
+    , text
+    , process
+    , containers
+    , filepath

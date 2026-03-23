@@ -1,0 +1,24 @@
+cabal-version:   2.4
+name:            agda-shim
+version:         0.1.0.0
+synopsis:        Agda Treeless IR extraction shim for OrganIR
+license:         GPL-2.0-only
+build-type:      Simple
+
+common defaults
+  default-language: GHC2024
+  default-extensions: OverloadedStrings
+  ghc-options: -Wall
+
+executable agda-organ
+  import: defaults
+  main-is: Main.hs
+  hs-source-dirs: src
+  other-modules: OrganBank.AgdaShim
+  build-depends:
+      base >= 4.20
+    , text
+    , process
+    , containers
+    , directory
+    , filepath

@@ -20,6 +20,14 @@ build/
 Mercury/
 *.hlds_dump
 
+# Zig
+.zig-cache/
+zig-out/
+zig-cache/
+
+# MAlonzo (Agda generated files)
+MAlonzo/
+
 # Editor
 *~
 *.swp

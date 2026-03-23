@@ -12,10 +12,11 @@ single compiled program.
 
 Frankenstein is a polyglot compiler that consumes code written in Haskell,
 Rust, Mercury, Idris 2, Lean 4, OCaml, Erlang/Elixir, PureScript, Koka,
-and Swift. Rather than writing ten parsers and ten type checkers, Frankenstein
-reuses the real compilers as donors. Organ Bank is the harvesting facility:
-it extracts the typed, analyzed IR from each compiler's guts and packages it
-in a uniform format that Frankenstein's MLIR backend can consume.
+Swift, Agda, F#, Scala 3, Julia, and Zig. Rather than writing fifteen parsers
+and fifteen type checkers, Frankenstein reuses the real compilers as donors.
+Organ Bank is the harvesting facility: it extracts the typed, analyzed IR
+from each compiler's guts and packages it in a uniform format that
+Frankenstein's MLIR backend can consume.
 
 The organs:
 
@@ -29,15 +30,22 @@ The organs:
 - **ocaml-shim** -- OCaml Lambda IR from `-dlambda`
 - **koka-shim** -- Koka Core from `--showcore`
 - **swift-shim** -- Swift SIL from `-emit-sil`
+- **agda-shim** -- Agda Treeless via MAlonzo backend
+- **fsharp-shim** -- F# Typed Tree from `--typedtree`
+- **scala3-shim** -- Scala 3 post-erasure trees from `-Vprint:erasure`
+- **julia-shim** -- Julia Typed IR via `code_typed()` reflection
+- **zig-shim** -- Zig ZIR via `std.zig.AstGen`
 
 ## Architecture
 
 ```
-  Source file (.hs, .rs, .m, .idr, .lean, .erl, .purs, .ml, .kk, .swift)
+  Source file (.hs, .rs, .m, .idr, .lean, .erl, .purs, .ml, .kk, .swift,
+              .agda, .fsx, .scala, .jl, .zig)
        |
        v
-  [Real Compiler Frontend]   <-- ghc, rustc, mmc, idris2, lean4,
-       |                         erlc, purs, ocamlopt, koka, swiftc
+  [Real Compiler Frontend]   <-- ghc, rustc, mmc, idris2, lean4, erlc,
+       |                         purs, ocamlopt, koka, swiftc, agda,
+       |                         dotnet-fsi, scalac, julia, zig
        v
   [Organ Bank Shim]          <-- this project
        |
@@ -82,6 +90,11 @@ See `spec/organ-ir-example.json` for a concrete example and
 | ocaml-shim | OCaml | Lambda | `ocamlopt -dlambda` | Working |
 | koka-shim | Koka | Core | `koka --showcore` | Working |
 | swift-shim | Swift | SIL | `swiftc -emit-sil` | Working |
+| agda-shim | Agda | Treeless | `agda --compile --ghc-dont-call-ghc` | Working |
+| fsharp-shim | F# | Typed Tree | `dotnet fsi --typedtree` | Working |
+| scala3-shim | Scala 3 | Erasure Trees | `scalac -Vprint:erasure` | Working |
+| julia-shim | Julia | Typed IR | `code_typed()` reflection | Working |
+| zig-shim | Zig | ZIR | `std.zig.AstGen` | Working |
 
 ## Building
 
@@ -117,6 +130,23 @@ cd koka-shim && cabal build
 
 # Swift shim (requires swiftc on PATH)
 cd swift-shim && cabal build
+
+# Agda shim (requires agda on PATH)
+cd agda-shim && cabal build
+
+# F# shim (requires dotnet SDK)
+cd fsharp-shim && cabal build
+
+# Scala 3 shim (requires scala via Coursier)
+cd scala3-shim && cabal build
+
+# Julia shim (requires julia on PATH)
+cd julia-shim && cabal build
+
+# Zig shim (requires zig on PATH)
+cd zig-shim && cabal build
+# Also build the Zig extraction tool:
+cd zig-shim/zig-tool && zig build
 ```
 
 ## Relationship to Frankenstein
