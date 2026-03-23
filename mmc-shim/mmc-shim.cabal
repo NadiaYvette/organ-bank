@@ -6,7 +6,7 @@ license:       GPL-2.0-only
 build-type:    Simple
 
 executable mmc-organ
-  default-language: GHC2021
+  default-language: GHC2024
   default-extensions: OverloadedStrings
   hs-source-dirs: src
   main-is: Main.hs
