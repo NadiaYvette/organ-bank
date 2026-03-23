@@ -1,0 +1,21 @@
+cabal-version: 3.0
+name:          sml-shim
+version:       0.1.0
+synopsis:      Extract MLton type basis from SML and emit OrganIR JSON
+license:       GPL-2.0-only
+build-type:    Simple
+
+executable sml-organ
+  default-language: GHC2024
+  default-extensions: OverloadedStrings
+  hs-source-dirs: src
+  main-is: Main.hs
+  other-modules: OrganBank.SmlShim
+  build-depends:
+    base >= 4.20 && < 5,
+    text,
+    process,
+    containers,
+    directory,
+    filepath
+  ghc-options: -Wall

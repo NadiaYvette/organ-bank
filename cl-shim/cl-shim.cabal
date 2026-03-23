@@ -1,0 +1,20 @@
+cabal-version: 3.0
+name:          cl-shim
+version:       0.1.0
+synopsis:      Extract SBCL disassembly from Common Lisp and emit OrganIR JSON
+license:       GPL-2.0-only
+build-type:    Simple
+
+executable cl-organ
+  default-language: GHC2024
+  default-extensions: OverloadedStrings
+  hs-source-dirs: src
+  main-is: Main.hs
+  other-modules: OrganBank.ClShim
+  build-depends:
+    base >= 4.20 && < 5,
+    text,
+    process,
+    containers,
+    filepath
+  ghc-options: -Wall

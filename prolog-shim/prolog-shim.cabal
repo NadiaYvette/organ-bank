@@ -1,0 +1,20 @@
+cabal-version: 3.0
+name:          prolog-shim
+version:       0.1.0
+synopsis:      Extract GNU Prolog WAM bytecode and emit OrganIR JSON
+license:       GPL-2.0-only
+build-type:    Simple
+
+executable prolog-organ
+  default-language: GHC2024
+  default-extensions: OverloadedStrings
+  hs-source-dirs: src
+  main-is: Main.hs
+  other-modules: OrganBank.PrologShim
+  build-depends:
+    base >= 4.20 && < 5,
+    text,
+    process,
+    containers,
+    filepath
+  ghc-options: -Wall

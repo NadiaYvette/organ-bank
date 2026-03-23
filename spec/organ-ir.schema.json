@@ -23,7 +23,7 @@
       "properties": {
         "source_language": {
           "type": "string",
-          "enum": ["haskell", "rust", "mercury", "idris2", "lean4", "koka", "ocaml", "swift", "erlang", "purescript", "agda", "fsharp", "scala3", "julia", "zig"]
+          "enum": ["haskell", "rust", "mercury", "idris2", "lean4", "koka", "ocaml", "swift", "erlang", "purescript", "agda", "fsharp", "scala3", "julia", "zig", "c", "cpp", "fortran", "ada", "sml", "common-lisp", "scheme", "prolog"]
         },
         "compiler_version": { "type": "string" },
         "source_file": { "type": "string" },

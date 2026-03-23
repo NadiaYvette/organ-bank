@@ -1,0 +1,19 @@
+cabal-version: 3.0
+name:          cpp-shim
+version:       0.1.0
+synopsis:      Extract LLVM IR from C++ and emit OrganIR JSON
+license:       GPL-2.0-only
+build-type:    Simple
+
+executable cpp-organ
+  default-language: GHC2024
+  default-extensions: OverloadedStrings
+  hs-source-dirs: src
+  main-is: Main.hs
+  other-modules: OrganBank.CppShim
+  build-depends:
+    base >= 4.20 && < 5,
+    text,
+    process,
+    containers
+  ghc-options: -Wall

@@ -12,8 +12,9 @@ single compiled program.
 
 Frankenstein is a polyglot compiler that consumes code written in Haskell,
 Rust, Mercury, Idris 2, Lean 4, OCaml, Erlang/Elixir, PureScript, Koka,
-Swift, Agda, F#, Scala 3, Julia, and Zig. Rather than writing fifteen parsers
-and fifteen type checkers, Frankenstein reuses the real compilers as donors.
+Swift, Agda, F#, Scala 3, Julia, Zig, C, C++, Fortran, Ada, Standard ML,
+Common Lisp, Scheme, and Prolog. Rather than writing twenty-three parsers
+and twenty-three type checkers, Frankenstein reuses the real compilers as donors.
 Organ Bank is the harvesting facility: it extracts the typed, analyzed IR
 from each compiler's guts and packages it in a uniform format that
 Frankenstein's MLIR backend can consume.
@@ -35,17 +36,27 @@ The organs:
 - **scala3-shim** -- Scala 3 post-erasure trees from `-Vprint:erasure`
 - **julia-shim** -- Julia Typed IR via `code_typed()` reflection
 - **zig-shim** -- Zig ZIR via `std.zig.AstGen`
+- **c-shim** -- LLVM IR via `clang -emit-llvm -S`
+- **cpp-shim** -- LLVM IR via `clang++ -emit-llvm -S` (with C++ demangling)
+- **fortran-shim** -- GCC GIMPLE via `gfortran -fdump-tree-optimized`
+- **ada-shim** -- GCC GIMPLE via `gnat compile -fdump-tree-gimple`
+- **sml-shim** -- MLton type basis + source parsing
+- **cl-shim** -- SBCL disassembly via `sb-introspect`
+- **scheme-shim** -- Guile Tree-IL via `compile` API
+- **prolog-shim** -- GNU Prolog WAM bytecode via `gplc -W`
 
 ## Architecture
 
 ```
   Source file (.hs, .rs, .m, .idr, .lean, .erl, .purs, .ml, .kk, .swift,
-              .agda, .fsx, .scala, .jl, .zig)
+              .agda, .fsx, .scala, .jl, .zig, .c, .cpp, .f90, .adb,
+              .sml, .lisp, .scm, .pl)
        |
        v
   [Real Compiler Frontend]   <-- ghc, rustc, mmc, idris2, lean4, erlc,
        |                         purs, ocamlopt, koka, swiftc, agda,
-       |                         dotnet-fsi, scalac, julia, zig
+       |                         dotnet-fsi, scalac, julia, zig, clang,
+       |                         gfortran, gnat, mlton, sbcl, guile, gplc
        v
   [Organ Bank Shim]          <-- this project
        |
@@ -95,6 +106,14 @@ See `spec/organ-ir-example.json` for a concrete example and
 | scala3-shim | Scala 3 | Erasure Trees | `scalac -Vprint:erasure` | Working |
 | julia-shim | Julia | Typed IR | `code_typed()` reflection | Working |
 | zig-shim | Zig | ZIR | `std.zig.AstGen` | Working |
+| c-shim | C | LLVM IR | `clang -emit-llvm -S` | Working |
+| cpp-shim | C++ | LLVM IR | `clang++ -emit-llvm -S` | Working |
+| fortran-shim | Fortran | GIMPLE | `gfortran -fdump-tree-optimized` | Working |
+| ada-shim | Ada | GIMPLE | `gnat compile -fdump-tree-gimple` | Working |
+| sml-shim | Standard ML | Type basis | `mlton -show-basis` | Working |
+| cl-shim | Common Lisp | Disassembly | SBCL `sb-introspect` | Working |
+| scheme-shim | Scheme | Tree-IL | Guile `compile` API | Working |
+| prolog-shim | Prolog | WAM | `gplc -W` | Working |
 
 ## Building
 
@@ -147,6 +166,30 @@ cd julia-shim && cabal build
 cd zig-shim && cabal build
 # Also build the Zig extraction tool:
 cd zig-shim/zig-tool && zig build
+
+# C shim (requires clang/LLVM)
+cd c-shim && cabal build
+
+# C++ shim (requires clang++)
+cd cpp-shim && cabal build
+
+# Fortran shim (requires gfortran)
+cd fortran-shim && cabal build
+
+# Ada shim (requires GNAT)
+cd ada-shim && cabal build
+
+# Standard ML shim (requires MLton)
+cd sml-shim && cabal build
+
+# Common Lisp shim (requires SBCL)
+cd cl-shim && cabal build
+
+# Scheme shim (requires Guile 3.0)
+cd scheme-shim && cabal build
+
+# Prolog shim (requires GNU Prolog gplc)
+cd prolog-shim && cabal build
 ```
 
 ## Relationship to Frankenstein
