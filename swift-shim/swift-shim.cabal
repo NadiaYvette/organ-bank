@@ -6,7 +6,7 @@ license:         GPL-2.0-only
 build-type:      Simple
 
 common defaults
-  default-language: GHC2024
+  default-language: GHC2021
   default-extensions: OverloadedStrings
   ghc-options: -Wall
 
