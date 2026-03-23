@@ -1,116 +1,94 @@
 /-
   lean4-organ: Extract Lean 4 LCNF and emit OrganIR JSON.
 
-  Lean 4's compiler uses LCNF (Lambda-Compiled Normal Form) as its
-  post-erasure IR before code generation. This shim extracts LCNF
-  declarations and emits OrganIR JSON.
-
-  Strategy: Use Lean 4's Environment to access compiled declarations
-  after elaboration and compilation to LCNF.
--/
-
-namespace OrganBank
-
-/-- A simplified OrganIR definition extracted from LCNF. -/
-structure OrganDef where
-  name : String
-  moduleName : String
-  arity : Nat
-  unique : Nat
-  deriving Repr
-
-/-- Escape a string for JSON output. -/
-def jsonEscape (s : String) : String :=
-  s.foldl (fun acc c =>
-    acc ++ match c with
-    | '"'  => "\\\""
-    | '\\' => "\\\\"
-    | '\n' => "\\n"
-    | c    => c.toString
-  ) ""
-
-/-- Emit a single definition as OrganIR JSON. -/
-def emitDef (d : OrganDef) : String :=
-  let args := ", ".intercalate (List.replicate d.arity
-    "{\"multiplicity\": \"many\", \"type\": {\"con\": {\"qname\": {\"module\": \"std\", \"name\": {\"text\": \"any\"}}}}}")
-  s!"      \{
-        \"name\": \{\"module\": \"{jsonEscape d.moduleName}\", \"name\": \{\"text\": \"{jsonEscape d.name}\", \"unique\": {d.unique}}},
-        \"type\": \{\"fn\": \{\"args\": [{args}], \"effect\": \{\"effects\": []}, \"result\": \{\"con\": \{\"qname\": \{\"module\": \"std\", \"name\": \{\"text\": \"any\"}}}}}},
-        \"expr\": \{\"elit\": \{\"int\": 0}},
-        \"sort\": \"fun\",
-        \"visibility\": \"public\"
-      }"
-
-/-- Emit a complete OrganIR JSON document. -/
-def emitOrganIR (modName : String) (defs : List OrganDef) : String :=
-  let defsJson := ",\n".intercalate (defs.map emitDef)
-  s!"\{
-  \"schema_version\": \"1.0.0\",
-  \"metadata\": \{
-    \"source_language\": \"lean4\",
-    \"shim_version\": \"0.1.0\"
-  },
-  \"module\": \{
-    \"name\": \"{jsonEscape modName}\",
-    \"definitions\": [{defsJson}],
-    \"data_types\": [],
-    \"effect_decls\": []
-  }
-}"
-
-end OrganBank
-
-/--
-  Main entry point.
-
   Usage: lean4-organ <file.lean>
 
-  For the initial version, this uses `lean --run` to elaborate the file
-  and extract declaration names. A more complete version would use the
-  Lean 4 compiler API to access LCNF directly.
-
-  The real extraction strategy for Lean 4:
-  1. Import the target module into the environment
-  2. Walk `Environment.constants` for function definitions
-  3. Access LCNF via the compiler's internal passes
-  4. Map LCNF to OrganIR (erased types become `any`, do-notation effects preserved)
+  Compiles the input file through Lean 4's frontend (parsing, elaboration,
+  LCNF compilation), then extracts post-erasure LCNF declarations and
+  emits OrganIR JSON on stdout.
 -/
+import Lean
+import Lean.Elab.Frontend
+import Lean.Elab.Import
+import Lean.Compiler.LCNF.PhaseExt
+import OrganBank.OrganIR
+import OrganBank.LcnfExtract
+
+open Lean Lean.Elab
+open OrganBank.OrganIR
+open OrganBank.LcnfExtract
+
+/-- Run the Lean 4 frontend on a source file and return the final Environment. -/
+def elaborateFile (inputPath : System.FilePath) : IO Environment := do
+  let input ← IO.FS.readFile inputPath
+  -- Enable the new LCNF compiler so baseExt gets populated
+  let opts := ({} : Options) |>.setBool `compiler.enableNew true
+  initSearchPath (← findSysroot)
+  let inputCtx : Parser.InputContext := {
+    input := input
+    fileName := inputPath.toString
+    fileMap := FileMap.ofString input
+  }
+  let (header, parserState, messages) ← Parser.parseHeader inputCtx
+  let (headerEnv, messages) ← Elab.processHeader header opts messages inputCtx
+  if messages.hasErrors then
+    for msg in messages.toList do
+      if msg.severity == .error then
+        IO.eprintln (← msg.toString)
+    throw (IO.userError "Failed to process header")
+  -- Set up the FrontendM state and context
+  let frontendCtx : Frontend.Context := { inputCtx := inputCtx }
+  let cmdState := Command.mkState headerEnv messages opts
+  let frontendState : Frontend.State := {
+    commandState := cmdState
+    parserState := parserState
+    cmdPos := parserState.pos
+  }
+  -- Run the frontend to elaborate all commands
+  let (_, finalState) ← Frontend.processCommands.run frontendCtx |>.run frontendState
+  let finalCmdState := finalState.commandState
+  if finalCmdState.messages.hasErrors then
+    for msg in finalCmdState.messages.toList do
+      if msg.severity == .error then
+        IO.eprintln (← msg.toString)
+    throw (IO.userError "Elaboration failed")
+  return finalCmdState.env
+
+/-- Extract LCNF declarations from an environment using CoreM. -/
+def extractFromEnv (env : Environment) : IO (Array Definition) := do
+  let ctx : Core.Context := {
+    fileName := "<organ-bank>"
+    fileMap := FileMap.ofString ""
+  }
+  let state : Core.State := { env := env }
+  let (defs, _) ← extractMainModuleDeclsCoreM.toIO ctx state
+  return defs
+
+/-- Extract module name from file path: "Foo/Bar.lean" → "Foo.Bar" -/
+def fileToModuleName (path : String) : String :=
+  let stripped := if path.endsWith ".lean" then path.dropRight 5 else path
+  stripped.replace "/" "." |>.replace "\\" "."
+
 def main (args : List String) : IO UInt32 := do
   match args with
   | [inputPath] =>
-    -- For now, use lean --print-prefix to verify Lean is available,
-    -- then parse the source file for top-level definitions.
-    -- A full implementation would use the compiler API.
-    let contents ← IO.FS.readFile inputPath
-    let modName := inputPath.dropRight 5  -- strip .lean
-    let modName := modName.replace "/" "."
-    let defs := extractTopLevelDefs modName contents
-    IO.println (OrganBank.emitOrganIR modName defs)
-    return 0
+    try
+      let env ← elaborateFile inputPath
+      let defs ← extractFromEnv env
+      let modName := fileToModuleName inputPath
+      let organModule : OrganBank.OrganIR.Module := {
+        moduleName := modName
+        sourceFile := inputPath
+        compilerVersion := s!"lean4-{Lean.versionString}"
+        definitions := defs
+      }
+      IO.println organModule.toJson.pretty
+      return 0
+    catch e =>
+      IO.eprintln s!"Error: {e}"
+      return 1
   | _ =>
     IO.eprintln "Usage: lean4-organ <file.lean>"
-    IO.eprintln "Extracts Lean 4 definitions and emits OrganIR JSON on stdout."
+    IO.eprintln ""
+    IO.eprintln "Extracts Lean 4 LCNF (post-erasure IR) and emits OrganIR JSON."
     return 1
-
-/-- Extract top-level definitions by parsing `def` and `theorem` declarations.
-    This is a placeholder; the real version would walk LCNF. -/
-def extractTopLevelDefs (modName : String) (contents : String) : List OrganBank.OrganDef :=
-  let lines := contents.splitOn "\n"
-  let defs := lines.filterMap fun line =>
-    let trimmed := line.trimLeft
-    if trimmed.startsWith "def " then
-      let rest := (trimmed.drop 4).trimLeft
-      let name := rest.takeWhile fun c => c.isAlpha || c.isDigit || c == '_' || c == '\''
-      if name.isEmpty then none
-      else some name
-    else if trimmed.startsWith "theorem " then
-      let rest := (trimmed.drop 8).trimLeft
-      let name := rest.takeWhile fun c => c.isAlpha || c.isDigit || c == '_' || c == '\''
-      if name.isEmpty then none
-      else some name
-    else none
-  defs.enum.map fun (idx, name) =>
-    { name := name
-    , moduleName := modName
-    , arity := 0  -- would come from LCNF
-    , unique := idx + 1 }
