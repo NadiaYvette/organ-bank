@@ -1,7 +1,8 @@
 -- | Translate SML AST + inferred types to OrganIR JSON.
 module SmlFrontend.ToOrganIR (emitOrganIR) where
 
-import Data.List (unsnoc)
+import Data.List.NonEmpty (NonEmpty (..))
+import Data.List.NonEmpty qualified as NE
 import Data.Text (Text)
 import Data.Text qualified as T
 import SmlFrontend.Elab.Env
@@ -47,11 +48,11 @@ valBindToDef st (ValBind _ pat exp_) =
         Nothing -> []
 
 funBindToDef :: InferState -> FunBind -> [Text]
-funBindToDef st (FunBind clauses@(FunClause (VId name) pats _ _ : _)) =
+funBindToDef st (FunBind clauses@(FunClause (VId name) pats _ _ :| _)) =
     let ty = lookupType (T.unpack name) st
         arity = length pats
         bodyJson = case clauses of
-            [FunClause _ ps _ body] ->
+            FunClause _ ps _ body :| [] ->
                 let paramNames = concatMap patNames ps
                     params = T.concat ["[", T.intercalate ", " (map (\p -> T.concat ["[", jsonStr p, ", 0]"]) paramNames), "]"]
                  in T.concat ["{\"tag\": \"lam\", \"params\": ", params, ", \"body\": ", expToJson body, "}"]
@@ -60,11 +61,10 @@ funBindToDef st (FunBind clauses@(FunClause (VId name) pats _ _ : _)) =
                 T.concat
                     [ "{\"tag\": \"lam\", \"params\": [[\"_arg\", 0]], \"body\": "
                     , "{\"tag\": \"case\", \"scrutinee_name\": \"_arg\", \"scrutinee_unique\": 0, \"branches\": ["
-                    , T.intercalate ", " (map clauseToJson clauses)
+                    , T.intercalate ", " (map clauseToJson (NE.toList clauses))
                     , "]}}"
                     ]
      in [emitDef (T.unpack name) ty bodyJson arity]
-funBindToDef _ (FunBind []) = []
 
 clauseToJson :: FunClause -> Text
 clauseToJson (FunClause _ pats _ body) =
@@ -122,7 +122,7 @@ expToJson (EInfix l (VId op) r) =
         , expToJson r
         , "]}}"
         ]
-expToJson (EFn [MRule pat body]) =
+expToJson (EFn (MRule pat body :| [])) =
     let names = patNames pat
         params = T.concat ["[", T.intercalate ", " (map (\n -> T.concat ["[", jsonStr n, ", 0]"]) names), "]"]
      in T.concat ["{\"tag\": \"lam\", \"params\": ", params, ", \"body\": ", expToJson body, "}"]
@@ -145,15 +145,15 @@ expToJson (ECase scrut rules) =
         [ "{\"tag\": \"case\", \"scrutinee\": "
         , expToJson scrut
         , ", \"branches\": ["
-        , T.intercalate ", " (map mruleToJson rules)
+        , T.intercalate ", " (map mruleToJson (NE.toList rules))
         , "]}"
         ]
 expToJson (ETuple es) = T.concat ["{\"tag\": \"tuple\", \"elements\": [", T.intercalate ", " (map expToJson es), "]}"]
 expToJson (EList es) = T.concat ["{\"tag\": \"list\", \"elements\": [", T.intercalate ", " (map expToJson es), "]}"]
 expToJson (ERaise e) = T.concat ["{\"tag\": \"raise\", \"exn\": ", expToJson e, "}"]
 expToJson (ESeq []) = "{\"tag\": \"tuple\", \"elements\": []}"
-expToJson (ESeq es) = case unsnoc es of
-    Just (_, e) -> expToJson e
+expToJson (ESeq es) = case NE.nonEmpty es of
+    Just ne -> expToJson (NE.last ne)
     Nothing -> "{\"tag\": \"tuple\", \"elements\": []}"
 expToJson (EAndalso a b) = expToJson (EIf a b (EVar (LongVId [] (VId "false"))))
 expToJson (EOrelse a b) = expToJson (EIf a (EVar (LongVId [] (VId "true"))) b)
@@ -216,7 +216,7 @@ emitDef name ty bodyJson arity =
 
 datbindToDef :: DatBind -> [Text]
 datbindToDef (DatBind _ (TyCon tcName) conbinds) =
-    map (conbindToDef tcName) conbinds
+    map (conbindToDef tcName) (NE.toList conbinds)
 
 conbindToDef :: Text -> ConBind -> Text
 conbindToDef tcName (ConBind (VId cname) argTy) =

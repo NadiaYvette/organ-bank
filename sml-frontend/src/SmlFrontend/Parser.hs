@@ -2,7 +2,8 @@
 module SmlFrontend.Parser (parseSml) where
 
 import Data.Char (isAsciiUpper)
-import Data.List (unsnoc)
+import Data.List.NonEmpty (NonEmpty (..))
+import Data.List.NonEmpty qualified as NE
 import Data.Text (Text)
 import Data.Text qualified as T
 import SmlFrontend.Lexer
@@ -80,39 +81,31 @@ getSymOrId st = case peek st of
 parseLongVId :: PState -> PResult (LongVId, PState)
 parseLongVId st = do
     (VId first, st') <- getSymOrId st
-    collectQual [first] st'
+    collectQual (first :| []) st'
   where
     collectQual parts s = case peek s of
         KDot -> case peek (advance s) of
-            KId _ -> do (t, s') <- getId (advance s); collectQual (parts ++ [t]) s'
-            KSymId _ -> let KSymId t = peek (advance s) in collectQual (parts ++ [t]) (advance (advance s))
+            KId _ -> do (t, s') <- getId (advance s); collectQual (parts <> (t :| [])) s'
+            KSymId _ -> let KSymId t = peek (advance s) in collectQual (parts <> (t :| [])) (advance (advance s))
             _ -> finish parts s
         _ -> finish parts s
-    finish parts s = case unsnoc parts of
-        Nothing -> error "parseLongVId: empty parts"
-        Just ([], x) -> return (LongVId [] (VId x), s)
-        Just (prefixes, x) ->
-            let strs = map StrId prefixes
-                vid = VId x
-             in return (LongVId strs vid, s)
+    finish parts s =
+        let (prefixes, vid) = (NE.init parts, NE.last parts)
+         in return (LongVId (map StrId prefixes) (VId vid), s)
 
 parseLongTyCon :: PState -> PResult (LongTyCon, PState)
 parseLongTyCon st = do
     (t, st') <- getId st
-    collectQualTc [t] st'
+    collectQualTc (t :| []) st'
   where
     collectQualTc parts s = case peek s of
         KDot -> case peek (advance s) of
-            KId _ -> do (t, s') <- getId (advance s); collectQualTc (parts ++ [t]) s'
+            KId _ -> do (t, s') <- getId (advance s); collectQualTc (parts <> (t :| [])) s'
             _ -> finish parts s
         _ -> finish parts s
-    finish parts s = case unsnoc parts of
-        Nothing -> error "parseLongTyCon: empty parts"
-        Just ([], x) -> return (LongTyCon [] (TyCon x), s)
-        Just (prefixes, x) ->
-            let strs = map StrId prefixes
-                tc = TyCon x
-             in return (LongTyCon strs tc, s)
+    finish parts s =
+        let (prefixes, tc) = (NE.init parts, NE.last parts)
+         in return (LongTyCon (map StrId prefixes) (TyCon tc), s)
 
 -- | Parse a sequence of declarations.
 parseDecs :: PState -> PResult ([Dec], PState)
@@ -171,15 +164,15 @@ parseFunBinds st = do
             return (FunBind clauses : more, st3)
         else return ([FunBind clauses], st1)
 
-parseFunClauses :: PState -> PResult ([FunClause], PState)
+parseFunClauses :: PState -> PResult (NonEmpty FunClause, PState)
 parseFunClauses st = do
     (clause, st1) <- parseFunClause st
     let (hasBar, st2) = tryConsume KBar st1
     if hasBar
         then do
             (more, st3) <- parseFunClauses st2
-            return (clause : more, st3)
-        else return ([clause], st1)
+            return (clause :| NE.toList more, st3)
+        else return (clause :| [], st1)
 
 parseFunClause :: PState -> PResult (FunClause, PState)
 parseFunClause st = do
@@ -268,15 +261,15 @@ parseDatBinds st = do
             return (bind : more, st6)
         else return ([bind], st4)
 
-parseConBinds :: PState -> PResult ([ConBind], PState)
+parseConBinds :: PState -> PResult (NonEmpty ConBind, PState)
 parseConBinds st = do
     (con, st1) <- parseConBind st
     let (hasBar, st2) = tryConsume KBar st1
     if hasBar
         then do
             (more, st3) <- parseConBinds st2
-            return (con : more, st3)
-        else return ([con], st1)
+            return (con :| NE.toList more, st3)
+        else return (con :| [], st1)
 
 parseConBind :: PState -> PResult (ConBind, PState)
 parseConBind st = do
@@ -579,7 +572,7 @@ parseWhileExp st = do
     return (EWhile cond body, st4)
 
 -- match: pat => exp [| pat => exp ...]
-parseMatch :: PState -> PResult ([MRule], PState)
+parseMatch :: PState -> PResult (NonEmpty MRule, PState)
 parseMatch st = do
     -- Optional leading bar
     let st0 = snd (tryConsume KBar st)
@@ -590,10 +583,10 @@ parseMatch st = do
     if hasBar
         then do
             (more, st5) <- parseMatchCont st4
-            return (MRule pat e : more, st5)
-        else return ([MRule pat e], st3)
+            return (MRule pat e :| NE.toList more, st5)
+        else return (MRule pat e :| [], st3)
 
-parseMatchCont :: PState -> PResult ([MRule], PState)
+parseMatchCont :: PState -> PResult (NonEmpty MRule, PState)
 parseMatchCont st = do
     (pat, st1) <- parsePat st
     st2 <- expect KDArrow st1
@@ -602,8 +595,8 @@ parseMatchCont st = do
     if hasBar
         then do
             (more, st5) <- parseMatchCont st4
-            return (MRule pat e : more, st5)
-        else return ([MRule pat e], st3)
+            return (MRule pat e :| NE.toList more, st5)
+        else return (MRule pat e :| [], st3)
 
 -- | Parse a pattern.
 parsePat :: PState -> PResult (Pat, PState)

@@ -4,6 +4,7 @@ Module language (structures, signatures, functors) is deferred.
 -}
 module SmlFrontend.Syntax.AST where
 
+import Data.List.NonEmpty (NonEmpty)
 import SmlFrontend.Syntax.Const
 import SmlFrontend.Syntax.Ident
 
@@ -31,13 +32,13 @@ data Exp
     | -- | Type constraint (exp : ty)
       ETyped Exp Ty
     | -- | Exception handler (exp handle match)
-      EHandle Exp [MRule]
+      EHandle Exp (NonEmpty MRule)
     | -- | raise exp
       ERaise Exp
     | -- | fn match (lambda)
-      EFn [MRule]
+      EFn (NonEmpty MRule)
     | -- | case exp of match
-      ECase Exp [MRule]
+      ECase Exp (NonEmpty MRule)
     | -- | if e1 then e2 else e3 (derived)
       EIf Exp Exp Exp
     | -- | e1 andalso e2 (derived)
@@ -147,8 +148,8 @@ data ValBind = ValBind
     }
     deriving (Show)
 
--- | Function binding: one or more clauses.
-newtype FunBind = FunBind [FunClause]
+-- | Function binding: one or more clauses (Definition §2.7).
+newtype FunBind = FunBind (NonEmpty FunClause)
     deriving (Show)
 
 -- | A single clause of a function binding: f pat1 ... patn = exp.
@@ -159,8 +160,8 @@ data FunClause = FunClause VId [Pat] (Maybe Ty) Exp
 data TypBind = TypBind [TyVar] TyCon Ty
     deriving (Show)
 
--- | Datatype binding.
-data DatBind = DatBind [TyVar] TyCon [ConBind]
+-- | Datatype binding (Definition §2.7, ≥1 constructor).
+data DatBind = DatBind [TyVar] TyCon (NonEmpty ConBind)
     deriving (Show)
 
 -- | Constructor binding.

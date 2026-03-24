@@ -19,6 +19,7 @@ import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Except
 import Control.Monad.Trans.State.Strict
 import Data.List (nub, (\\))
+import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict qualified as Map
 import Data.Text qualified as T
 import SmlFrontend.Elab.Env
@@ -235,7 +236,7 @@ infer (EApp f arg) = do
     unify tf (ITyFun ta tr)
     return tr
 -- Lambda: fn match (single rule)
-infer (EFn [MRule pat body]) = do
+infer (EFn (MRule pat body :| [])) = do
     (bindings, tpat) <- inferPat pat
     tbody <- withBindings bindings (infer body)
     return (ITyFun tpat tbody)
@@ -443,7 +444,7 @@ inferValBind (ValBind isRec pat exp_) =
             mapM_ addBinding bindings
 
 inferFunBind :: FunBind -> InferM ()
-inferFunBind (FunBind clauses@(FunClause (VId name) _ _ _ : _)) = do
+inferFunBind (FunBind clauses@(FunClause (VId name) _ _ _ :| _)) = do
     -- Bind the function name with a fresh type for recursion
     funTy <- fresh
     let fname = T.unpack name
@@ -453,7 +454,6 @@ inferFunBind (FunBind clauses@(FunClause (VId name) _ _ _ : _)) = do
     -- Generalize
     scheme <- generalize funTy True -- fun bindings are always values
     modifyEnv (extendEnv fname scheme)
-inferFunBind (FunBind []) = return ()
 
 inferFunClause :: ITy -> FunClause -> InferM ()
 inferFunClause funTy (FunClause _ pats _retTy body) = do
