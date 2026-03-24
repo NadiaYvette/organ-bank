@@ -1,0 +1,24 @@
+cabal-version: 3.0
+name:          organ-ir
+version:       0.1.0
+synopsis:      OrganIR types, builders, and JSON emission for polyglot compiler interchange
+description:
+  Haskell data types faithfully representing the OrganIR JSON schema,
+  type-safe builder functions, and efficient Text-based JSON emission.
+  Used by organ-bank frontends and shims to produce OrganIR for
+  consumption by the Frankenstein polyglot compiler.
+license:       GPL-2.0-only
+build-type:    Simple
+
+library
+  default-language: GHC2024
+  default-extensions: OverloadedStrings
+  hs-source-dirs: src
+  exposed-modules:
+    OrganIR.Types
+    OrganIR.Build
+    OrganIR.Json
+  build-depends:
+    base >= 4.20 && < 5,
+    text
+  ghc-options: -Wall
