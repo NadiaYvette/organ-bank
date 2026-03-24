@@ -1,0 +1,46 @@
+cabal-version: 3.0
+name:          sml-frontend
+version:       0.1.0
+synopsis:      Independent Standard ML frontend emitting OrganIR JSON
+description:
+  A from-scratch Standard ML frontend following the Definition of
+  Standard ML (Revised). Implements lexing, parsing, Hindley-Milner
+  type inference with value restriction, pattern match compilation,
+  and translation to OrganIR JSON for consumption by Frankenstein.
+license:       GPL-2.0-only
+build-type:    Simple
+
+library
+  default-language: GHC2024
+  default-extensions: OverloadedStrings
+  hs-source-dirs: src
+  exposed-modules:
+    SmlFrontend.Syntax.Ident
+    SmlFrontend.Syntax.Const
+    SmlFrontend.Syntax.AST
+    SmlFrontend.Lexer
+    SmlFrontend.Parser
+    SmlFrontend.Elab.Types
+    SmlFrontend.Elab.Env
+    SmlFrontend.Elab.Infer
+    SmlFrontend.Match
+    SmlFrontend.ToOrganIR
+    SmlFrontend.Basis
+  build-depends:
+    base >= 4.20 && < 5,
+    text,
+    containers,
+    transformers
+  ghc-options: -Wall
+
+executable sml-organ-fe
+  default-language: GHC2024
+  default-extensions: OverloadedStrings
+  hs-source-dirs: app
+  main-is: Main.hs
+  build-depends:
+    base >= 4.20 && < 5,
+    text,
+    filepath,
+    sml-frontend
+  ghc-options: -Wall
