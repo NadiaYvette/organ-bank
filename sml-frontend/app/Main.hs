@@ -14,22 +14,23 @@ import System.FilePath (takeBaseName)
 import System.IO (hPutStrLn, stderr)
 
 main :: IO ()
-main = do
-    args <- getArgs
-    case args of
+main =
+    getArgs >>= \case
         [path] -> run path
         _ -> do
             hPutStrLn stderr "Usage: sml-organ-fe <file.sml>"
             exitFailure
 
 run :: FilePath -> IO ()
-run path = do
-    src <- TIO.readFile path
-    case pipeline path src of
-        Left err -> do
-            hPutStrLn stderr $ "Error: " ++ err
-            exitFailure
-        Right json -> TIO.putStr json
+run path =
+    TIO.readFile path
+        >>= ( \case
+                Left err -> do
+                    hPutStrLn stderr $ "Error: " ++ err
+                    exitFailure
+                Right json -> TIO.putStr json
+            )
+            . pipeline path
 
 pipeline :: FilePath -> Text -> Either String Text
 pipeline path src = do
