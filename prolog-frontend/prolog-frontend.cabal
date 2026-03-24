@@ -1,0 +1,39 @@
+cabal-version: 3.0
+name:          prolog-frontend
+version:       0.1.0
+synopsis:      Independent ISO Prolog frontend emitting OrganIR JSON
+description:
+  A from-scratch ISO Prolog frontend: lexer, term reader with operator
+  precedence, clause grouping, and translation to OrganIR JSON for
+  consumption by Frankenstein.
+license:       GPL-2.0-only
+build-type:    Simple
+
+library
+  default-language: GHC2024
+  default-extensions: OverloadedStrings
+  hs-source-dirs: src
+  exposed-modules:
+    PrologFrontend.Lexer
+    PrologFrontend.Term
+    PrologFrontend.Parser
+    PrologFrontend.ToOrganIR
+  build-depends:
+    base >= 4.20 && < 5,
+    text,
+    containers,
+    organ-ir
+  ghc-options: -Wall
+
+executable prolog-organ-fe
+  default-language: GHC2024
+  default-extensions: OverloadedStrings
+  hs-source-dirs: app
+  main-is: Main.hs
+  build-depends:
+    base >= 4.20 && < 5,
+    text,
+    filepath,
+    prolog-frontend,
+    organ-ir
+  ghc-options: -Wall
