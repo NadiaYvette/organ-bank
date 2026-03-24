@@ -1,0 +1,39 @@
+cabal-version: 3.0
+name:          scheme-frontend
+version:       0.1.0
+synopsis:      Independent R7RS-small Scheme frontend emitting OrganIR JSON
+description:
+  A from-scratch R7RS-small Scheme frontend: lexer, s-expression reader,
+  core AST, macro/derived-form desugaring, and translation to OrganIR
+  JSON for consumption by Frankenstein.
+license:       GPL-2.0-only
+build-type:    Simple
+
+library
+  default-language: GHC2024
+  default-extensions: OverloadedStrings
+  hs-source-dirs: src
+  exposed-modules:
+    SchemeFrontend.Lexer
+    SchemeFrontend.Reader
+    SchemeFrontend.AST
+    SchemeFrontend.Desugar
+    SchemeFrontend.ToOrganIR
+  build-depends:
+    base >= 4.20 && < 5,
+    text,
+    organ-ir
+  ghc-options: -Wall
+
+executable scheme-organ-fe
+  default-language: GHC2024
+  default-extensions: OverloadedStrings
+  hs-source-dirs: app
+  main-is: Main.hs
+  build-depends:
+    base >= 4.20 && < 5,
+    text,
+    filepath,
+    scheme-frontend,
+    organ-ir
+  ghc-options: -Wall
