@@ -21,3 +21,4 @@ executable scala3-organ
     , process
     , containers
     , filepath
+    , organ-ir

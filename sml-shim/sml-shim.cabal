@@ -17,5 +17,6 @@ executable sml-organ
     process,
     containers,
     directory,
-    filepath
+    filepath,
+    organ-ir
   ghc-options: -Wall

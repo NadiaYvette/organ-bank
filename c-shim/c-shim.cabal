@@ -15,5 +15,7 @@ executable c-organ
     base >= 4.20 && < 5,
     text,
     process,
-    containers
+    containers,
+    filepath,
+    organ-ir
   ghc-options: -Wall

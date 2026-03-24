@@ -19,5 +19,5 @@ executable swift-organ
       base >= 4.20
     , text
     , process
-    , containers
     , filepath
+    , organ-ir

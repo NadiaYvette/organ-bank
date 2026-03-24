@@ -6,3 +6,19 @@ packages:
   erlang-frontend/
   lua-frontend/
   forth-frontend/
+  sml-shim/
+  erlc-shim/
+  prolog-shim/
+  ocaml-shim/
+  koka-shim/
+  c-shim/
+  cpp-shim/
+  mmc-shim/
+  swift-shim/
+  idris2-shim/
+  purs-shim/
+  agda-shim/
+  fsharp-shim/
+  fortran-shim/
+  ada-shim/
+  scala3-shim/

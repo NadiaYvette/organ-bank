@@ -16,5 +16,6 @@ executable prolog-organ
     text,
     process,
     containers,
-    filepath
+    filepath,
+    organ-ir
   ghc-options: -Wall

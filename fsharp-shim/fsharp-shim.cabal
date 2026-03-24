@@ -21,3 +21,4 @@ executable fsharp-organ
     , process
     , containers
     , filepath
+    , organ-ir

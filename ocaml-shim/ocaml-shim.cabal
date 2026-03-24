@@ -21,3 +21,4 @@ executable ocaml-organ
     , process
     , containers
     , filepath
+    , organ-ir

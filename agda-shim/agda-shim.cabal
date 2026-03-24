@@ -22,3 +22,4 @@ executable agda-organ
     , containers
     , directory
     , filepath
+    , organ-ir

@@ -1,24 +1,27 @@
--- | OCaml Lambda IR Extraction Shim
---
--- Invokes @ocamlopt -dlambda -c@ on an OCaml source file to dump the
--- Lambda intermediate representation, then parses the S-expression-like
--- output and emits OrganIR JSON.
---
--- OCaml Lambda IR is post-type-erasure: all types are erased.  The IR
--- uses @let@/@letrec@ bindings with @(function ...)@ forms for lambdas
--- and @(makeblock 0 ...)@ for the module export tuple.
+{- | OCaml Lambda IR Extraction Shim
 
-module OrganBank.OcamlShim
-  ( extractOrganIR
-  ) where
+Invokes @ocamlopt -dlambda -c@ on an OCaml source file to dump the
+Lambda intermediate representation, then parses the S-expression-like
+output and emits OrganIR JSON.
 
-import Data.Char (isAlphaNum, isDigit, isSpace)
-import Data.List (isPrefixOf, intercalate)
+OCaml Lambda IR is post-type-erasure: all types are erased.  The IR
+uses @let@/@letrec@ bindings with @(function ...)@ forms for lambdas
+and @(makeblock 0 ...)@ for the module export tuple.
+-}
+module OrganBank.OcamlShim (
+    extractOrganIR,
+) where
+
+import Data.Char (isAlphaNum, isAsciiLower, isDigit, isSpace)
+import Data.List (isPrefixOf)
 import Data.Text (Text)
-import qualified Data.Text as T
+import Data.Text qualified as T
+import OrganIR.Build qualified as IR
+import OrganIR.Json (renderOrganIR)
+import OrganIR.Types qualified as IR
+import System.Exit (ExitCode (..))
 import System.FilePath (takeBaseName)
 import System.Process (readProcessWithExitCode)
-import System.Exit (ExitCode(..))
 
 -- ---------------------------------------------------------------------------
 -- Public API
@@ -27,31 +30,31 @@ import System.Exit (ExitCode(..))
 -- | Extract OCaml Lambda IR from a @.ml@ file and return OrganIR JSON.
 extractOrganIR :: FilePath -> IO (Either String Text)
 extractOrganIR inputPath = do
-  -- ocamlopt -dlambda prints Lambda IR to stdout, compiles to .cmx/.o
-  -- We use -c to avoid linking.
-  (exitCode, stdout_, stderr_) <-
-    readProcessWithExitCode "ocamlopt" ["-dlambda", "-c", inputPath] ""
-  -- Lambda IR goes to stderr for some OCaml versions, stdout for others.
-  -- Try stderr first; if empty, use stdout.
-  let lambdaText = if null (strip stderr_) then stdout_ else stderr_
-  case exitCode of
-    ExitSuccess -> do
-      let modName   = capitalise (takeBaseName inputPath)
-          defs      = parseLambdaIR lambdaText
-          exports   = extractExports lambdaText
-          json      = emitOrganIR modName inputPath defs exports
-      pure (Right json)
-    ExitFailure _ ->
-      -- Even when compilation fails, -dlambda may still have printed IR
-      -- before the error.  But if there's nothing useful, report the error.
-      if null (strip lambdaText)
-        then pure (Left $ "ocamlopt failed:\n" <> stderr_ <> stdout_)
-        else do
-          let modName = capitalise (takeBaseName inputPath)
-              defs    = parseLambdaIR lambdaText
-              exports = extractExports lambdaText
-              json    = emitOrganIR modName inputPath defs exports
-          pure (Right json)
+    -- ocamlopt -dlambda prints Lambda IR to stdout, compiles to .cmx/.o
+    -- We use -c to avoid linking.
+    (exitCode, stdout_, stderr_) <-
+        readProcessWithExitCode "ocamlopt" ["-dlambda", "-c", inputPath] ""
+    -- Lambda IR goes to stderr for some OCaml versions, stdout for others.
+    -- Try stderr first; if empty, use stdout.
+    let lambdaText = if null (strip stderr_) then stdout_ else stderr_
+    case exitCode of
+        ExitSuccess -> do
+            let modName = capitalise (takeBaseName inputPath)
+                defs = parseLambdaIR lambdaText
+                exports = extractExports lambdaText
+                json = emitOrganIR modName inputPath defs exports
+            pure (Right json)
+        ExitFailure _ ->
+            -- Even when compilation fails, -dlambda may still have printed IR
+            -- before the error.  But if there's nothing useful, report the error.
+            if null (strip lambdaText)
+                then pure (Left $ "ocamlopt failed:\n" <> stderr_ <> stdout_)
+                else do
+                    let modName = capitalise (takeBaseName inputPath)
+                        defs = parseLambdaIR lambdaText
+                        exports = extractExports lambdaText
+                        json = emitOrganIR modName inputPath defs exports
+                    pure (Right json)
 
 -- ---------------------------------------------------------------------------
 -- Lambda IR types
@@ -59,76 +62,100 @@ extractOrganIR inputPath = do
 
 -- | A parsed top-level definition from the Lambda IR.
 data LambdaDef = LambdaDef
-  { ldName   :: String   -- ^ Bare name (e.g. "fact")
-  , ldUnique :: Int      -- ^ OCaml stamp (e.g. 270 from "fact/270")
-  , ldArity  :: Int      -- ^ Number of parameters (0 for non-functions)
-  , ldParams :: [OcamlParam]  -- ^ Parameter names/uniques
-  , ldIsRec  :: Bool     -- ^ Bound in a letrec?
-  , ldBody   :: LambdaExpr    -- ^ Parsed body expression
-  } deriving (Show)
+    { ldName :: String
+    -- ^ Bare name (e.g. "fact")
+    , ldUnique :: Int
+    -- ^ OCaml stamp (e.g. 270 from "fact/270")
+    , ldArity :: Int
+    -- ^ Number of parameters (0 for non-functions)
+    , ldParams :: [OcamlParam]
+    -- ^ Parameter names/uniques
+    , ldIsRec :: Bool
+    -- ^ Bound in a letrec?
+    , ldBody :: LambdaExpr
+    -- ^ Parsed body expression
+    }
+    deriving (Show)
 
 data OcamlParam = OcamlParam
-  { opName   :: String
-  , opUnique :: Int
-  } deriving (Show)
+    { opName :: String
+    , opUnique :: Int
+    }
+    deriving (Show)
 
 -- | Simplified Lambda expression tree.
 data LambdaExpr
-  = LVar String Int            -- ^ Variable reference: name/stamp
-  | LInt Int                   -- ^ Integer literal
-  | LFloat Double              -- ^ Float literal
-  | LString String             -- ^ String literal
-  | LApp LambdaExpr [LambdaExpr]  -- ^ Application
-  | LLam [OcamlParam] LambdaExpr  -- ^ Function (lambda)
-  | LLet [(String, Int, LambdaExpr)] LambdaExpr  -- ^ Let binding
-  | LLetRec [(String, Int, LambdaExpr)] LambdaExpr  -- ^ Letrec
-  | LIf LambdaExpr LambdaExpr LambdaExpr  -- ^ If-then-else
-  | LSwitch LambdaExpr [(Int, LambdaExpr)]  -- ^ Switch/match
-  | LMakeBlock Int [LambdaExpr]  -- ^ (makeblock tag ...)
-  | LPrim String [LambdaExpr]   -- ^ Primitive operation
-  | LSeq LambdaExpr LambdaExpr  -- ^ Sequence
-  | LRaw String                -- ^ Unparsed fallback
-  deriving (Show)
+    = -- | Variable reference: name/stamp
+      LVar String Int
+    | -- | Integer literal
+      LInt Int
+    | -- | Float literal
+      LFloat Double
+    | -- | String literal
+      LString String
+    | -- | Application
+      LApp LambdaExpr [LambdaExpr]
+    | -- | Function (lambda)
+      LLam [OcamlParam] LambdaExpr
+    | -- | Let binding
+      LLet [(String, Int, LambdaExpr)] LambdaExpr
+    | -- | Letrec
+      LLetRec [(String, Int, LambdaExpr)] LambdaExpr
+    | -- | If-then-else
+      LIf LambdaExpr LambdaExpr LambdaExpr
+    | -- | Switch/match
+      LSwitch LambdaExpr [(Int, LambdaExpr)]
+    | -- | (makeblock tag ...)
+      LMakeBlock Int [LambdaExpr]
+    | -- | Primitive operation
+      LPrim String [LambdaExpr]
+    | -- | Sequence
+      LSeq LambdaExpr LambdaExpr
+    | -- | Unparsed fallback
+      LRaw String
+    deriving (Show)
 
 -- ---------------------------------------------------------------------------
 -- S-expression tokenizer
 -- ---------------------------------------------------------------------------
 
 data SExpr
-  = SAtom String
-  | SList [SExpr]
-  deriving (Show)
+    = SAtom String
+    | SList [SExpr]
+    deriving (Show)
 
 tokenize :: String -> [String]
 tokenize [] = []
-tokenize ('(':rest) = "(" : tokenize rest
-tokenize (')':rest) = ")" : tokenize rest
-tokenize ('"':rest) = let (s, rest') = spanString rest
-                      in ('"' : s ++ "\"") : tokenize rest'
-tokenize (c:rest)
-  | isSpace c = tokenize rest
-  | otherwise = let (tok, rest') = span isAtomChar (c:rest)
-                in tok : tokenize rest'
+tokenize ('(' : rest) = "(" : tokenize rest
+tokenize (')' : rest) = ")" : tokenize rest
+tokenize ('"' : rest) =
+    let (s, rest') = spanString rest
+     in ('"' : s ++ "\"") : tokenize rest'
+tokenize (c : rest)
+    | isSpace c = tokenize rest
+    | otherwise =
+        let (tok, rest') = span isAtomChar (c : rest)
+         in tok : tokenize rest'
   where
     isAtomChar x = not (isSpace x) && x /= '(' && x /= ')' && x /= '"'
 
 -- | Consume a string literal body (after opening quote).
 spanString :: String -> (String, String)
 spanString [] = ([], [])
-spanString ('"':rest) = ([], rest)
-spanString ('\\':c:rest) = let (s, r) = spanString rest in ('\\':c:s, r)
-spanString (c:rest) = let (s, r) = spanString rest in (c:s, r)
+spanString ('"' : rest) = ([], rest)
+spanString ('\\' : c : rest) = let (s, r) = spanString rest in ('\\' : c : s, r)
+spanString (c : rest) = let (s, r) = spanString rest in (c : s, r)
 
 parseSExprs :: [String] -> ([SExpr], [String])
 parseSExprs [] = ([], [])
-parseSExprs (")":rest) = ([], rest)
-parseSExprs ("(":rest) =
-  let (children, rest') = parseSExprs rest
-      (siblings, rest'') = parseSExprs rest'
-  in (SList children : siblings, rest'')
-parseSExprs (tok:rest) =
-  let (siblings, rest') = parseSExprs rest
-  in (SAtom tok : siblings, rest')
+parseSExprs (")" : rest) = ([], rest)
+parseSExprs ("(" : rest) =
+    let (children, rest') = parseSExprs rest
+        (siblings, rest'') = parseSExprs rest'
+     in (SList children : siblings, rest'')
+parseSExprs (tok : rest) =
+    let (siblings, rest') = parseSExprs rest
+     in (SAtom tok : siblings, rest')
 
 parseSExprTop :: String -> [SExpr]
 parseSExprTop input = fst (parseSExprs (tokenize input))
@@ -140,363 +167,292 @@ parseSExprTop input = fst (parseSExprs (tokenize input))
 -- | Parse top-level definitions from the Lambda IR text.
 parseLambdaIR :: String -> [LambdaDef]
 parseLambdaIR input =
-  let sexprs = parseSExprTop input
-  in concatMap extractDefsFromSExpr sexprs
+    let sexprs = parseSExprTop input
+     in concatMap extractDefsFromSExpr sexprs
 
 extractDefsFromSExpr :: SExpr -> [LambdaDef]
 extractDefsFromSExpr (SList (SAtom "let" : rest)) =
-  extractLetDefs False rest
+    extractLetDefs False rest
 extractDefsFromSExpr (SList (SAtom "letrec" : rest)) =
-  extractLetDefs True rest
+    extractLetDefs True rest
 extractDefsFromSExpr _ = []
 
--- | Extract definitions from a let/letrec form.
--- The form is: (let (binding1 binding2 ...) body)
--- or nested: (let (name/N = expr) body)
--- OCaml Lambda uses: (let (name/N expr) rest) where rest is the continuation
+{- | Extract definitions from a let/letrec form.
+The form is: (let (binding1 binding2 ...) body)
+or nested: (let (name/N = expr) body)
+OCaml Lambda uses: (let (name/N expr) rest) where rest is the continuation
+-}
 extractLetDefs :: Bool -> [SExpr] -> [LambdaDef]
 extractLetDefs isRec rest =
-  case rest of
-    -- (let/letrec (name/N stuff...) body)
-    (SList binding : body) ->
-      let defs  = extractBinding isRec binding
-          -- The body itself may contain more let/letrec forms
-          defs' = concatMap extractDefsFromSExpr body
-      in defs ++ defs'
-    _ -> []
+    case rest of
+        -- (let/letrec (name/N stuff...) body)
+        (SList binding : body) ->
+            let defs = extractBinding isRec binding
+                -- The body itself may contain more let/letrec forms
+                defs' = concatMap extractDefsFromSExpr body
+             in defs ++ defs'
+        _ -> []
 
 extractBinding :: Bool -> [SExpr] -> [LambdaDef]
 extractBinding isRec (SAtom nameSlash : SAtom "=" : exprParts) =
-  let (name, uniq) = parseNameSlash nameSlash
-      expr         = parseLambdaExpr (regroup exprParts)
-      (arity, params) = extractFunctionInfo expr
-  in [LambdaDef name uniq arity params isRec expr]
+    let (name, uniq) = parseNameSlash nameSlash
+        expr = parseLambdaExpr (regroup exprParts)
+        (arity, params) = extractFunctionInfo expr
+     in [LambdaDef name uniq arity params isRec expr]
 extractBinding isRec (SAtom nameSlash : exprParts) =
-  let (name, uniq) = parseNameSlash nameSlash
-      expr         = parseLambdaExpr (regroup exprParts)
-      (arity, params) = extractFunctionInfo expr
-  in [LambdaDef name uniq arity params isRec expr]
+    let (name, uniq) = parseNameSlash nameSlash
+        expr = parseLambdaExpr (regroup exprParts)
+        (arity, params) = extractFunctionInfo expr
+     in [LambdaDef name uniq arity params isRec expr]
 extractBinding _ _ = []
 
 -- | Regroup a list of SExprs into a single one for parsing.
 regroup :: [SExpr] -> SExpr
 regroup [x] = x
-regroup xs  = SList xs
+regroup xs = SList xs
 
 -- | Parse a Lambda expression from an S-expression.
 parseLambdaExpr :: SExpr -> LambdaExpr
 parseLambdaExpr (SAtom s)
-  | all isDigit s = LInt (read s)
-  | isNegInt s    = LInt (read s)
-  | isFloat s     = LFloat (read s)
-  | isStringLit s = LString (unquote s)
-  | '/' `elem` s  = let (n, u) = parseNameSlash s in LVar n u
-  | otherwise     = LVar s 0
+    | all isDigit s = LInt (read s)
+    | isNegInt s = LInt (read s)
+    | isFloat s = LFloat (read s)
+    | isStringLit s = LString (unquote s)
+    | '/' `elem` s = let (n, u) = parseNameSlash s in LVar n u
+    | otherwise = LVar s 0
   where
-    isNegInt ('-':cs) = not (null cs) && all isDigit cs
-    isNegInt _        = False
+    isNegInt ('-' : cs) = not (null cs) && all isDigit cs
+    isNegInt _ = False
     isFloat xs = case break (== '.') xs of
-      (pre, '.':post) -> not (null pre) && not (null post)
-                         && all (\c -> isDigit c || c == '-') pre
-                         && all isDigit post
-      _ -> False
-    isStringLit ('"':_) = True
-    isStringLit _       = False
-    unquote ('"':xs') = take (length xs' - 1) xs'
-    unquote xs'       = xs'
-
+        (pre, '.' : post) ->
+            not (null pre)
+                && not (null post)
+                && all (\c -> isDigit c || c == '-') pre
+                && all isDigit post
+        _ -> False
+    isStringLit ('"' : _) = True
+    isStringLit _ = False
+    unquote ('"' : xs') = take (length xs' - 1) xs'
+    unquote xs' = xs'
 parseLambdaExpr (SList (SAtom "function" : rest)) =
-  let (params, body) = spanParams rest
-  in LLam params (parseLambdaExpr (regroup body))
+    let (params, body) = spanParams rest
+     in LLam params (parseLambdaExpr (regroup body))
   where
     spanParams :: [SExpr] -> ([OcamlParam], [SExpr])
     spanParams (SAtom p : SAtom ":" : SAtom _kind : more) =
-      let (ps, b) = spanParams more
-          (n, u)  = parseNameSlash p
-      in (OcamlParam n u : ps, b)
+        let (ps, b) = spanParams more
+            (n, u) = parseNameSlash p
+         in (OcamlParam n u : ps, b)
     spanParams (SAtom p : more)
-      | '/' `elem` p =
-          -- Could be a param without kind annotation
-          let (ps, b) = spanParams more
-              (n, u)  = parseNameSlash p
-          in (OcamlParam n u : ps, b)
+        | '/' `elem` p =
+            -- Could be a param without kind annotation
+            let (ps, b) = spanParams more
+                (n, u) = parseNameSlash p
+             in (OcamlParam n u : ps, b)
     spanParams xs = ([], xs)
-
 parseLambdaExpr (SList (SAtom "let" : rest)) =
-  case rest of
-    (SList binding : body) ->
-      let binds = extractLetBindings binding
-          bodyExpr = parseLambdaExpr (regroup body)
-      in LLet binds bodyExpr
-    _ -> LRaw (show rest)
-
+    case rest of
+        (SList binding : body) ->
+            let binds = extractLetBindings binding
+                bodyExpr = parseLambdaExpr (regroup body)
+             in LLet binds bodyExpr
+        _ -> LRaw (show rest)
 parseLambdaExpr (SList (SAtom "letrec" : rest)) =
-  case rest of
-    (SList binding : body) ->
-      let binds = extractLetBindings binding
-          bodyExpr = parseLambdaExpr (regroup body)
-      in LLetRec binds bodyExpr
-    _ -> LRaw (show rest)
-
+    case rest of
+        (SList binding : body) ->
+            let binds = extractLetBindings binding
+                bodyExpr = parseLambdaExpr (regroup body)
+             in LLetRec binds bodyExpr
+        _ -> LRaw (show rest)
 parseLambdaExpr (SList [SAtom "if", cond, SAtom "then", thn, SAtom "else", els]) =
-  LIf (parseLambdaExpr cond) (parseLambdaExpr thn) (parseLambdaExpr els)
-
+    LIf (parseLambdaExpr cond) (parseLambdaExpr thn) (parseLambdaExpr els)
 parseLambdaExpr (SList (SAtom "if" : cond : rest)) =
-  -- Flexible if parsing
-  case rest of
-    (thn : els : _) -> LIf (parseLambdaExpr cond) (parseLambdaExpr thn) (parseLambdaExpr els)
-    _               -> LRaw ("if " ++ show rest)
-
+    -- Flexible if parsing
+    case rest of
+        (thn : els : _) -> LIf (parseLambdaExpr cond) (parseLambdaExpr thn) (parseLambdaExpr els)
+        _ -> LRaw ("if " ++ show rest)
 parseLambdaExpr (SList (SAtom "makeblock" : SAtom tag : fields))
-  | all isDigit tag =
-      LMakeBlock (read tag) (map parseLambdaExpr fields)
-
+    | all isDigit tag =
+        LMakeBlock (read tag) (map parseLambdaExpr fields)
 parseLambdaExpr (SList (SAtom "seq" : rest)) =
-  case rest of
-    [a, b] -> LSeq (parseLambdaExpr a) (parseLambdaExpr b)
-    _      -> LRaw ("seq " ++ show rest)
-
+    case rest of
+        [a, b] -> LSeq (parseLambdaExpr a) (parseLambdaExpr b)
+        _ -> LRaw ("seq " ++ show rest)
 parseLambdaExpr (SList (SAtom "apply" : fn : args)) =
-  LApp (parseLambdaExpr fn) (map parseLambdaExpr args)
-
+    LApp (parseLambdaExpr fn) (map parseLambdaExpr args)
 parseLambdaExpr (SList (SAtom prim : args))
-  | isPrimName prim =
-      LPrim prim (map parseLambdaExpr args)
-
+    | isPrimName prim =
+        LPrim prim (map parseLambdaExpr args)
 parseLambdaExpr (SList (fn : args)) =
-  LApp (parseLambdaExpr fn) (map parseLambdaExpr args)
-
+    LApp (parseLambdaExpr fn) (map parseLambdaExpr args)
 parseLambdaExpr (SList []) = LRaw "()"
 
 -- | Is this an OCaml primitive name? (starts with % or caml_)
 isPrimName :: String -> Bool
-isPrimName ('%':_) = True
-isPrimName s       = "caml_" `isPrefixOf` s
+isPrimName ('%' : _) = True
+isPrimName s = "caml_" `isPrefixOf` s
 
 extractLetBindings :: [SExpr] -> [(String, Int, LambdaExpr)]
 extractLetBindings (SAtom nameSlash : SAtom "=" : rest) =
-  let (exprParts, remaining) = splitBinding rest
-      (name, uniq) = parseNameSlash nameSlash
-      expr = parseLambdaExpr (regroup exprParts)
-  in (name, uniq, expr) : extractLetBindings remaining
+    let (exprParts, remaining) = splitBinding rest
+        (name, uniq) = parseNameSlash nameSlash
+        expr = parseLambdaExpr (regroup exprParts)
+     in (name, uniq, expr) : extractLetBindings remaining
 extractLetBindings (SAtom nameSlash : rest) =
-  let (exprParts, remaining) = splitBinding rest
-      (name, uniq) = parseNameSlash nameSlash
-      expr = parseLambdaExpr (regroup exprParts)
-  in (name, uniq, expr) : extractLetBindings remaining
+    let (exprParts, remaining) = splitBinding rest
+        (name, uniq) = parseNameSlash nameSlash
+        expr = parseLambdaExpr (regroup exprParts)
+     in (name, uniq, expr) : extractLetBindings remaining
 extractLetBindings _ = []
 
 -- | Split binding list at the next binding (a bare name/N atom).
 splitBinding :: [SExpr] -> ([SExpr], [SExpr])
 splitBinding [] = ([], [])
 splitBinding (s@(SAtom a) : rest)
-  | '/' `elem` a, isBindName a =
-      -- This looks like the next binding name
-      ([], s : rest)
+    | '/' `elem` a
+    , isBindName a =
+        -- This looks like the next binding name
+        ([], s : rest)
   where
-    isBindName xs = let (n, _) = parseNameSlash xs
-                    in not (null n) && all (\c -> isAlphaNum c || c == '_' || c == '\'') n
-splitBinding (x:rest) =
-  let (expr, remaining) = splitBinding rest
-  in (x : expr, remaining)
+    isBindName xs =
+        let (n, _) = parseNameSlash xs
+         in not (null n) && all (\c -> isAlphaNum c || c == '_' || c == '\'') n
+splitBinding (x : rest) =
+    let (expr, remaining) = splitBinding rest
+     in (x : expr, remaining)
 
 -- | Extract function arity and parameters from a lambda expression.
 extractFunctionInfo :: LambdaExpr -> (Int, [OcamlParam])
 extractFunctionInfo (LLam params _) = (length params, params)
-extractFunctionInfo _               = (0, [])
+extractFunctionInfo _ = (0, [])
 
--- | Parse "name/123" or "name/123[type]" into (name, 123).
--- Falls back to (s, 0) if no slash.
+{- | Parse "name/123" or "name/123[type]" into (name, 123).
+Falls back to (s, 0) if no slash.
+-}
 parseNameSlash :: String -> (String, Int)
 parseNameSlash s =
-  case break (== '/') s of
-    (name, '/':rest) ->
-      -- Strip optional [type] annotation: "123[int]" -> "123"
-      let numStr = takeWhile isDigit rest
-      in if not (null numStr)
-         then (name, read numStr)
-         else (s, 0)
-    _ -> (s, 0)
+    case break (== '/') s of
+        (name, '/' : rest) ->
+            -- Strip optional [type] annotation: "123[int]" -> "123"
+            let numStr = takeWhile isDigit rest
+             in if not (null numStr)
+                    then (name, read numStr)
+                    else (s, 0)
+        _ -> (s, 0)
 
 -- | Extract the module exports list from a @(makeblock 0 ...)@ at the end.
 extractExports :: String -> [String]
 extractExports input =
-  let sexprs = parseSExprTop input
-  in extractExportsFromSExprs sexprs
+    let sexprs = parseSExprTop input
+     in extractExportsFromSExprs sexprs
 
 extractExportsFromSExprs :: [SExpr] -> [String]
 extractExportsFromSExprs [] = []
 extractExportsFromSExprs sexprs =
-  -- Walk all top-level forms and nested let/letrec bodies to find
-  -- the final makeblock
-  concatMap findMakeBlock sexprs
+    -- Walk all top-level forms and nested let/letrec bodies to find
+    -- the final makeblock
+    concatMap findMakeBlock sexprs
 
 findMakeBlock :: SExpr -> [String]
 findMakeBlock (SList (SAtom "makeblock" : SAtom "0" : fields)) =
-  mapMaybe extractExportName fields
+    mapMaybe extractExportName fields
   where
     mapMaybe _ [] = []
-    mapMaybe f (x:xs) = case f x of
-      Just v  -> v : mapMaybe f xs
-      Nothing -> mapMaybe f xs
+    mapMaybe f (x : xs) = case f x of
+        Just v -> v : mapMaybe f xs
+        Nothing -> mapMaybe f xs
     extractExportName (SAtom nameSlash) = Just (fst (parseNameSlash nameSlash))
-    extractExportName _                 = Nothing
+    extractExportName _ = Nothing
 findMakeBlock (SList (SAtom "let" : _ : body)) =
-  concatMap findMakeBlock body
+    concatMap findMakeBlock body
 findMakeBlock (SList (SAtom "letrec" : _ : body)) =
-  concatMap findMakeBlock body
+    concatMap findMakeBlock body
 findMakeBlock (SList (SAtom "seq" : rest)) =
-  concatMap findMakeBlock rest
+    concatMap findMakeBlock rest
 findMakeBlock _ = []
 
 -- ---------------------------------------------------------------------------
--- OrganIR JSON emission
+-- OrganIR emission via organ-ir library
 -- ---------------------------------------------------------------------------
 
 emitOrganIR :: String -> FilePath -> [LambdaDef] -> [String] -> Text
 emitOrganIR modName srcFile defs exports =
-  T.pack $ unlines
-    [ "{"
-    , "  \"schema_version\": \"1.0.0\","
-    , "  \"metadata\": {"
-    , "    \"source_language\": \"ocaml\","
-    , "    \"source_file\": " ++ jsonString srcFile ++ ","
-    , "    \"shim_version\": \"0.1.0\""
-    , "  },"
-    , "  \"module\": {"
-    , "    \"name\": " ++ jsonString modName ++ ","
-    , "    \"exports\": [" ++ intercalate ", " (map jsonString exports) ++ "],"
-    , "    \"definitions\": ["
-    , intercalate ",\n" (map (emitDef modName) defs)
-    , "    ],"
-    , "    \"data_types\": [],"
-    , "    \"effect_decls\": []"
-    , "  }"
-    , "}"
-    ]
+    let meta =
+            IR.Metadata
+                IR.LOCaml
+                Nothing
+                (Just (T.pack srcFile))
+                "ocaml-shim-0.1"
+                Nothing
+        modul =
+            IR.Module
+                (T.pack modName)
+                (map T.pack exports)
+                (map (defToIR modName) defs)
+                []
+                []
+     in renderOrganIR (IR.OrganIR meta modul)
 
-emitDef :: String -> LambdaDef -> String
-emitDef modName def =
-  let name   = ldName def
-      uniq   = ldUnique def
-      arity  = ldArity def
-      params = ldParams def
-      sort_  = if arity > 0 then "fun" else "val"
-      vis    = "public"
-      ty     = if arity > 0
-               then emitFnType params
-               else "      {\"con\": {\"qname\": {\"module\": \"std\", \"name\": {\"text\": \"any\"}}}}"
-      expr   = emitExpr (ldBody def)
-  in unlines
-    [ "      {"
-    , "        \"name\": {\"module\": " ++ jsonString modName
-        ++ ", \"name\": {\"text\": " ++ jsonString name
-        ++ ", \"unique\": " ++ show uniq ++ "}},"
-    , "        \"type\": " ++ ty ++ ","
-    , "        \"expr\": " ++ expr ++ ","
-    , "        \"sort\": " ++ jsonString sort_ ++ ","
-    , "        \"visibility\": " ++ jsonString vis
-    , "      }"
-    ]
+defToIR :: String -> LambdaDef -> IR.Definition
+defToIR modName def =
+    let qname = IR.QName (T.pack modName) (IR.Name (T.pack (ldName def)) (ldUnique def))
+        arity = ldArity def
+        ty
+            | arity > 0 = IR.TFn (map paramToArg (ldParams def)) IR.pureEffect IR.TAny
+            | otherwise = IR.TAny
+        sort_
+            | arity > 0 = IR.SFun
+            | otherwise = IR.SVal
+     in IR.Definition qname ty (exprToIR (ldBody def)) sort_ IR.Public arity
 
--- | Emit a function type with the given params. All types are @any@ since
--- OCaml Lambda IR is post-type-erasure.
-emitFnType :: [OcamlParam] -> String
-emitFnType params =
-  "{\"fn\": {\"args\": ["
-  ++ intercalate ", " (map emitArgType params)
-  ++ "], \"effect\": {\"effects\": []}, \"result\": "
-  ++ "{\"con\": {\"qname\": {\"module\": \"std\", \"name\": {\"text\": \"any\"}}}}"
-  ++ "}}"
-  where
-    emitArgType _ =
-      "{\"multiplicity\": \"many\", \"type\": "
-      ++ "{\"con\": {\"qname\": {\"module\": \"std\", \"name\": {\"text\": \"any\"}}}}}"
+paramToArg :: OcamlParam -> IR.FnArg
+paramToArg _ = IR.FnArg (Just IR.Many) IR.TAny
 
--- | Emit an OrganIR expression from a parsed Lambda expression.
-emitExpr :: LambdaExpr -> String
-emitExpr (LVar name uniq) =
-  "{\"evar\": {\"text\": " ++ jsonString name ++ ", \"unique\": " ++ show uniq ++ "}}"
-emitExpr (LInt n) =
-  "{\"elit\": {\"int\": " ++ show n ++ "}}"
-emitExpr (LFloat f) =
-  "{\"elit\": {\"float\": " ++ show f ++ "}}"
-emitExpr (LString s) =
-  "{\"elit\": {\"string\": " ++ jsonString s ++ "}}"
-emitExpr (LLam params body) =
-  "{\"elam\": {\"params\": ["
-  ++ intercalate ", " (map emitParam params)
-  ++ "], \"body\": " ++ emitExpr body ++ "}}"
-  where
-    emitParam p =
-      "{\"name\": {\"text\": " ++ jsonString (opName p)
-      ++ ", \"unique\": " ++ show (opUnique p) ++ "}"
-      ++ ", \"type\": {\"con\": {\"qname\": {\"module\": \"std\", \"name\": {\"text\": \"any\"}}}}}"
-emitExpr (LApp fn args) =
-  "{\"eapp\": {\"fn\": " ++ emitExpr fn
-  ++ ", \"args\": [" ++ intercalate ", " (map emitExpr args) ++ "]}}"
-emitExpr (LLet binds body) =
-  "{\"elet\": {\"binds\": ["
-  ++ intercalate ", " (map emitLetBind binds)
-  ++ "], \"body\": " ++ emitExpr body ++ "}}"
-emitExpr (LLetRec binds body) =
-  -- OrganIR doesn't distinguish let/letrec, use elet
-  "{\"elet\": {\"binds\": ["
-  ++ intercalate ", " (map emitLetBind binds)
-  ++ "], \"body\": " ++ emitExpr body ++ "}}"
-emitExpr (LIf cond thn els) =
-  "{\"ecase\": {\"scrutinee\": " ++ emitExpr cond
-  ++ ", \"branches\": ["
-  ++ "{\"pattern\": {\"pat_lit\": {\"bool\": true}}, \"body\": " ++ emitExpr thn ++ "}, "
-  ++ "{\"pattern\": {\"pat_lit\": {\"bool\": false}}, \"body\": " ++ emitExpr els ++ "}"
-  ++ "]}}"
-emitExpr (LSwitch scrut branches) =
-  "{\"ecase\": {\"scrutinee\": " ++ emitExpr scrut
-  ++ ", \"branches\": ["
-  ++ intercalate ", " (map emitSwitchBranch branches)
-  ++ "]}}"
-  where
-    emitSwitchBranch (tag, body) =
-      "{\"pattern\": {\"pat_lit\": {\"int\": " ++ show tag ++ "}}, \"body\": " ++ emitExpr body ++ "}"
-emitExpr (LMakeBlock tag fields) =
-  "{\"econ\": {\"name\": {\"module\": \"ocaml\", \"name\": {\"text\": \"block_"
-  ++ show tag ++ "\"}}, \"args\": ["
-  ++ intercalate ", " (map emitExpr fields) ++ "]}}"
-emitExpr (LPrim name args) =
-  "{\"eapp\": {\"fn\": {\"evar\": {\"text\": " ++ jsonString name
-  ++ ", \"unique\": 0}}, \"args\": ["
-  ++ intercalate ", " (map emitExpr args) ++ "]}}"
-emitExpr (LSeq a b) =
-  "{\"elet\": {\"binds\": [{\"name\": {\"text\": \"_seq\", \"unique\": 0}, "
-  ++ "\"expr\": " ++ emitExpr a ++ "}], \"body\": " ++ emitExpr b ++ "}}"
-emitExpr (LRaw s) =
-  "{\"elit\": {\"string\": " ++ jsonString s ++ "}}"
+exprToIR :: LambdaExpr -> IR.Expr
+exprToIR (LVar n u) = IR.EVar (IR.Name (T.pack n) u)
+exprToIR (LInt n) = IR.ELit (IR.LitInt (fromIntegral n))
+exprToIR (LFloat f) = IR.ELit (IR.LitFloat f)
+exprToIR (LString s) = IR.ELit (IR.LitString (T.pack s))
+exprToIR (LLam params body) = IR.ELam (map paramToLamParam params) (exprToIR body)
+exprToIR (LApp fn args) = IR.EApp (exprToIR fn) (map exprToIR args)
+exprToIR (LLet binds body) = IR.ELet (map bindToIR binds) (exprToIR body)
+exprToIR (LLetRec binds body) = IR.ELet (map bindToIR binds) (exprToIR body)
+exprToIR (LIf cond thn els) =
+    IR.ECase
+        (exprToIR cond)
+        [ IR.Branch (IR.PatLit (IR.LitBool True)) (exprToIR thn)
+        , IR.Branch (IR.PatLit (IR.LitBool False)) (exprToIR els)
+        ]
+exprToIR (LSwitch scrut branches) =
+    IR.ECase
+        (exprToIR scrut)
+        ( map
+            (\(tag, body) -> IR.Branch (IR.PatLit (IR.LitInt (fromIntegral tag))) (exprToIR body))
+            branches
+        )
+exprToIR (LMakeBlock tag fields) =
+    IR.ECon (IR.qualName "ocaml" ("block_" <> T.pack (show tag))) (map exprToIR fields)
+exprToIR (LPrim n args) = IR.EApp (IR.EVar (IR.Name (T.pack n) 0)) (map exprToIR args)
+exprToIR (LSeq a b) = IR.ELet [IR.LetBind (IR.Name "_seq" 0) Nothing (exprToIR a)] (exprToIR b)
+exprToIR (LRaw s) = IR.ELit (IR.LitString (T.pack s))
 
-emitLetBind :: (String, Int, LambdaExpr) -> String
-emitLetBind (name, uniq, expr) =
-  "{\"name\": {\"text\": " ++ jsonString name ++ ", \"unique\": " ++ show uniq
-  ++ "}, \"expr\": " ++ emitExpr expr ++ "}"
+paramToLamParam :: OcamlParam -> IR.LamParam
+paramToLamParam p = IR.LamParam (IR.Name (T.pack (opName p)) (opUnique p)) Nothing
+
+bindToIR :: (String, Int, LambdaExpr) -> IR.LetBind
+bindToIR (n, u, e) = IR.LetBind (IR.Name (T.pack n) u) Nothing (exprToIR e)
 
 -- ---------------------------------------------------------------------------
 -- Helpers
 -- ---------------------------------------------------------------------------
 
-jsonString :: String -> String
-jsonString s = "\"" ++ concatMap escChar s ++ "\""
-  where
-    escChar '"'  = "\\\""
-    escChar '\\' = "\\\\"
-    escChar '\n' = "\\n"
-    escChar '\t' = "\\t"
-    escChar c    = [c]
-
 strip :: String -> String
 strip = reverse . dropWhile isSpace . reverse . dropWhile isSpace
 
 capitalise :: String -> String
-capitalise []     = []
-capitalise (c:cs) = toUpper' c : cs
+capitalise [] = []
+capitalise (c : cs) = toUpper' c : cs
   where
     toUpper' x
-      | x >= 'a' && x <= 'z' = toEnum (fromEnum x - 32)
-      | otherwise             = x
+        | isAsciiLower x = toEnum (fromEnum x - 32)
+        | otherwise = x

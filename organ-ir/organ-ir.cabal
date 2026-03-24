@@ -18,7 +18,20 @@ library
     OrganIR.Types
     OrganIR.Build
     OrganIR.Json
+    OrganIR.Parse
   build-depends:
     base >= 4.20 && < 5,
     text
+  ghc-options: -Wall
+
+test-suite roundtrip
+  type: exitcode-stdio-1.0
+  default-language: GHC2024
+  default-extensions: OverloadedStrings
+  hs-source-dirs: test
+  main-is: RoundTrip.hs
+  build-depends:
+    base >= 4.20 && < 5,
+    text,
+    organ-ir
   ghc-options: -Wall
