@@ -31,7 +31,8 @@ library
     text,
     containers,
     transformers,
-    extra
+    extra,
+    organ-ir
   ghc-options: -Wall
 
 executable sml-organ-fe

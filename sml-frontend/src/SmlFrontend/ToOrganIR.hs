@@ -1,10 +1,13 @@
--- | Translate SML AST + inferred types to OrganIR JSON.
+-- | Translate SML AST + inferred types to OrganIR using the organ-ir library.
 module SmlFrontend.ToOrganIR (emitOrganIR) where
 
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.List.NonEmpty qualified as NE
 import Data.Text (Text)
 import Data.Text qualified as T
+import OrganIR.Build qualified as IR
+import OrganIR.Json (renderOrganIR)
+import OrganIR.Types qualified as IR
 import SmlFrontend.Elab.Env
 import SmlFrontend.Elab.Infer (InferState (..))
 import SmlFrontend.Elab.Types
@@ -15,217 +18,143 @@ import SmlFrontend.Syntax.Ident
 -- | Emit OrganIR JSON for a program with inferred types.
 emitOrganIR :: String -> FilePath -> Program -> InferState -> Text
 emitOrganIR modName srcFile (Program decs) st =
-    let defs = concatMap (decToDefs st) decs
-     in T.concat
-            [ "{\n  \"source_language\": \"sml\",\n"
-            , "  \"module_name\": "
-            , jsonStr (T.pack modName)
-            , ",\n"
-            , "  \"source_file\": "
-            , jsonStr (T.pack srcFile)
-            , ",\n"
-            , "  \"compiler_version\": \"sml-frontend-0.1\",\n"
-            , "  \"definitions\": [\n"
-            , T.intercalate ",\n" defs
-            , "\n  ]\n}\n"
-            ]
+    renderOrganIR $
+        IR.OrganIR
+            { IR.irMetadata =
+                IR.Metadata
+                    { IR.metaSourceLang = IR.LSml
+                    , IR.metaCompilerVersion = Nothing
+                    , IR.metaSourceFile = Just (T.pack srcFile)
+                    , IR.metaShimVersion = "sml-frontend-0.1"
+                    , IR.metaTimestamp = Nothing
+                    }
+            , IR.irModule =
+                IR.Module
+                    { IR.modName = T.pack modName
+                    , IR.modExports = []
+                    , IR.modDefs = concatMap (decToDefs st) decs
+                    , IR.modDataTypes = []
+                    , IR.modEffectDecls = []
+                    }
+            }
 
-decToDefs :: InferState -> Dec -> [Text]
-decToDefs st (DVal _ binds) = concatMap (valBindToDef st) binds
-decToDefs st (DFun _ binds) = concatMap (funBindToDef st) binds
-decToDefs _ (DDatatype datbinds) = concatMap datbindToDef datbinds
-decToDefs st (DLocal _ decs) = concatMap (decToDefs st) decs
-decToDefs st (DSeq decs) = concatMap (decToDefs st) decs
-decToDefs st (DPos _ d) = decToDefs st d
-decToDefs _ _ = []
+decToDefs :: InferState -> Dec -> [IR.Definition]
+decToDefs st = \case
+    DVal _ binds -> concatMap (valBindToDef st) binds
+    DFun _ binds -> concatMap (funBindToDef st) binds
+    DDatatype datbinds -> concatMap datbindToDef datbinds
+    DLocal _ decs -> concatMap (decToDefs st) decs
+    DSeq decs -> concatMap (decToDefs st) decs
+    DPos _ d -> decToDefs st d
+    _ -> []
 
-valBindToDef :: InferState -> ValBind -> [Text]
+valBindToDef :: InferState -> ValBind -> [IR.Definition]
 valBindToDef st (ValBind _ pat exp_) =
-    case patName pat of
-        Just name ->
-            let ty = lookupType name st
-             in [emitDef name ty (expToJson exp_) (expArity exp_)]
+    case smlPatName pat of
+        Just n ->
+            let ty = lookupSmlType n st
+             in [IR.funDef (T.pack n) ty (expToIR exp_) (expArity exp_)]
         Nothing -> []
 
-funBindToDef :: InferState -> FunBind -> [Text]
-funBindToDef st (FunBind clauses@(FunClause (VId name) pats _ _ :| _)) =
-    let ty = lookupType (T.unpack name) st
+funBindToDef :: InferState -> FunBind -> [IR.Definition]
+funBindToDef st (FunBind clauses@(FunClause (VId fname) pats _ _ :| _)) =
+    let ty = lookupSmlType (T.unpack fname) st
         arity = length pats
-        bodyJson = case clauses of
-            FunClause _ ps _ body :| [] ->
-                let paramNames = concatMap patNames ps
-                    params = T.concat ["[", T.intercalate ", " (map (\p -> T.concat ["[", jsonStr p, ", 0]"]) paramNames), "]"]
-                 in T.concat ["{\"tag\": \"lam\", \"params\": ", params, ", \"body\": ", expToJson body, "}"]
+        body = case clauses of
+            FunClause _ ps _ b :| [] ->
+                let paramNames = concatMap smlPatNames ps
+                 in IR.ELam (map (\p -> IR.LamParam (IR.name p) Nothing) paramNames) (expToIR b)
             _ ->
-                -- Multiple clauses: emit as case on args
-                T.concat
-                    [ "{\"tag\": \"lam\", \"params\": [[\"_arg\", 0]], \"body\": "
-                    , "{\"tag\": \"case\", \"scrutinee_name\": \"_arg\", \"scrutinee_unique\": 0, \"branches\": ["
-                    , T.intercalate ", " (map clauseToJson (NE.toList clauses))
-                    , "]}}"
-                    ]
-     in [emitDef (T.unpack name) ty bodyJson arity]
+                IR.ELam [IR.LamParam (IR.name "_arg") Nothing] $
+                    IR.ECase (IR.EVar (IR.name "_arg")) $
+                        map clauseToIR (NE.toList clauses)
+     in [IR.funDef fname ty body arity]
 
-clauseToJson :: FunClause -> Text
-clauseToJson (FunClause _ pats _ body) =
-    let binderNames = concatMap patNames pats
-        binders = T.concat ["[", T.intercalate ", " (map (\n -> T.concat ["[", jsonStr n, ", 0]"]) binderNames), "]"]
-     in T.concat ["{\"con\": \"_\", \"binders\": ", binders, ", \"body\": ", expToJson body, "}"]
+clauseToIR :: FunClause -> IR.Branch
+clauseToIR (FunClause _ pats _ body) =
+    let binders = concatMap smlPatNames pats
+     in IR.Branch (IR.PatCon (IR.localName "_") (map (\b -> IR.PatBinder (IR.name b) Nothing) binders)) (expToIR body)
 
-lookupType :: String -> InferState -> Text
-lookupType name st =
-    case lookupEnv name (isEnv st) of
-        Just (Scheme _ ty) -> tyToJson (apply (isSubst st) ty)
-        Nothing -> "{\"tag\": \"any\"}"
+lookupSmlType :: String -> InferState -> IR.Ty
+lookupSmlType n st =
+    case lookupEnv n (isEnv st) of
+        Just (Scheme _ ty) -> ityToTy (apply (isSubst st) ty)
+        Nothing -> IR.TAny
 
-tyToJson :: ITy -> Text
-tyToJson = \case
-    ITyVar _ -> "{\"tag\": \"any\"}"
-    ITyCon name [] -> T.concat ["{\"tag\": \"con\", \"name\": ", jsonStr (T.pack name), "}"]
-    ITyCon name args ->
-        T.concat
-            [ "{\"tag\": \"app\", \"con\": "
-            , jsonStr (T.pack name)
-            , ", \"args\": ["
-            , T.intercalate ", " (map tyToJson args)
-            , "]}"
-            ]
-    ITyFun a b ->
-        T.concat ["{\"tag\": \"fn\", \"params\": [", tyToJson a, "], \"result\": ", tyToJson b, "}"]
-    ITyTuple ts ->
-        T.concat ["{\"tag\": \"con\", \"name\": \"tuple\", \"args\": [", T.intercalate ", " (map tyToJson ts), "]}"]
-    ITyRecord _ -> "{\"tag\": \"con\", \"name\": \"record\"}"
+ityToTy :: ITy -> IR.Ty
+ityToTy = \case
+    ITyVar _ -> IR.TAny
+    ITyCon c [] -> IR.tCon (T.pack c)
+    ITyCon c args -> IR.TApp (IR.localName (T.pack c)) (map ityToTy args)
+    ITyFun a b -> IR.tFn [ityToTy a] (ityToTy b)
+    ITyTuple ts -> IR.TApp (IR.localName "tuple") (map ityToTy ts)
+    ITyRecord _ -> IR.tCon "record"
 
-expToJson :: Exp -> Text
-expToJson = \case
+expToIR :: Exp -> IR.Expr
+expToIR = \case
     ESCon sc
-        | SInt n <- sc -> T.concat ["{\"tag\": \"lit_int\", \"value\": ", T.pack (show n), "}"]
-        | SReal d <- sc -> T.concat ["{\"tag\": \"lit_float\", \"value\": ", T.pack (show d), "}"]
-        | SString s <- sc -> T.concat ["{\"tag\": \"lit_str\", \"value\": ", jsonStr s, "}"]
-        | SChar c <- sc -> T.concat ["{\"tag\": \"lit_str\", \"value\": ", jsonStr (T.singleton c), "}"]
-        | otherwise -> "{\"tag\": \"unreachable\"}"
-    EVar (LongVId _ (VId name)) ->
-        T.concat ["{\"tag\": \"var\", \"name\": ", jsonStr name, ", \"unique\": 0}"]
-    EApp f arg ->
-        T.concat ["{\"tag\": \"app\", \"fn\": ", expToJson f, ", \"arg\": ", expToJson arg, "}"]
-    EInfix l (VId op) r ->
-        T.concat
-            [ "{\"tag\": \"app\", \"fn\": {\"tag\": \"var\", \"name\": "
-            , jsonStr op
-            , ", \"unique\": 0}, \"arg\": {\"tag\": \"tuple\", \"elements\": ["
-            , expToJson l
-            , ", "
-            , expToJson r
-            , "]}}"
-            ]
+        | SInt n <- sc -> IR.ELit (IR.LitInt (fromIntegral n))
+        | SReal d <- sc -> IR.ELit (IR.LitFloat d)
+        | SString s <- sc -> IR.ELit (IR.LitString s)
+        | SChar c <- sc -> IR.ELit (IR.LitString (T.singleton c))
+        | otherwise -> IR.EUnreachable
+    EVar (LongVId _ (VId n)) -> IR.EVar (IR.name n)
+    EApp f arg -> IR.EApp (expToIR f) [expToIR arg]
+    EInfix l (VId op) r -> IR.EApp (IR.EVar (IR.name op)) [IR.ETuple [expToIR l, expToIR r]]
     EFn (MRule pat body :| []) ->
-        let params = T.concat ["[", T.intercalate ", " (map (\n -> T.concat ["[", jsonStr n, ", 0]"]) (patNames pat)), "]"]
-         in T.concat ["{\"tag\": \"lam\", \"params\": ", params, ", \"body\": ", expToJson body, "}"]
-    EFn _ -> "{\"tag\": \"lam\", \"params\": [], \"body\": {\"tag\": \"unreachable\"}}"
+        IR.ELam (map (\n -> IR.LamParam (IR.name n) Nothing) (smlPatNames pat)) (expToIR body)
+    EFn _ -> IR.ELam [] IR.EUnreachable
     ELet decs body ->
-        T.concat ["{\"tag\": \"let_block\", \"decs\": ", T.pack (show (length decs)), ", \"body\": ", expToJson body, "}"]
+        IR.ELet (zipWith (\i _ -> IR.LetBind (IR.name (T.pack ("_dec" ++ show i))) Nothing IR.EUnreachable) [(0 :: Int) ..] decs) (expToIR body)
     EIf _c t e ->
-        T.concat
-            [ "{\"tag\": \"case\", \"scrutinee_name\": \"_if\", \"scrutinee_unique\": 0, \"branches\": ["
-            , "{\"con\": \"true\", \"binders\": [], \"body\": "
-            , expToJson t
-            , "}, {\"con\": \"false\", \"binders\": [], \"body\": "
-            , expToJson e
-            , "}]}"
+        IR.ECase
+            (IR.ELit (IR.LitBool True))
+            [ IR.Branch (IR.PatCon (IR.localName "true") []) (expToIR t)
+            , IR.Branch (IR.PatCon (IR.localName "false") []) (expToIR e)
             ]
     ECase scrut rules ->
-        T.concat
-            [ "{\"tag\": \"case\", \"scrutinee\": "
-            , expToJson scrut
-            , ", \"branches\": ["
-            , T.intercalate ", " (map mruleToJson (NE.toList rules))
-            , "]}"
-            ]
-    ETuple es -> T.concat ["{\"tag\": \"tuple\", \"elements\": [", T.intercalate ", " (map expToJson es), "]}"]
-    EList es -> T.concat ["{\"tag\": \"list\", \"elements\": [", T.intercalate ", " (map expToJson es), "]}"]
-    ERaise e -> T.concat ["{\"tag\": \"raise\", \"exn\": ", expToJson e, "}"]
-    ESeq [] -> "{\"tag\": \"tuple\", \"elements\": []}"
-    ESeq (e : es) -> expToJson (NE.last (e :| es))
-    EAndalso a b -> expToJson (EIf a b (EVar (LongVId [] (VId "false"))))
-    EOrelse a b -> expToJson (EIf a (EVar (LongVId [] (VId "true"))) b)
-    ETyped e _ -> expToJson e
-    EPos _ e -> expToJson e
-    _ -> "{\"tag\": \"unreachable\"}"
+        IR.ECase (expToIR scrut) (map mruleToIR (NE.toList rules))
+    ETuple es -> IR.ETuple (map expToIR es)
+    EList es -> IR.EList (map expToIR es)
+    ERaise e -> IR.ERaise (expToIR e)
+    ESeq [] -> IR.ETuple []
+    ESeq (e : es) -> expToIR (NE.last (e :| es))
+    EAndalso a b -> expToIR (EIf a b (EVar (LongVId [] (VId "false"))))
+    EOrelse a b -> expToIR (EIf a (EVar (LongVId [] (VId "true"))) b)
+    ETyped e _ -> expToIR e
+    EPos _ e -> expToIR e
+    _ -> IR.EUnreachable
 
-mruleToJson :: MRule -> Text
-mruleToJson (MRule pat body) =
-    let binders = patNames pat
-        bs = T.concat ["[", T.intercalate ", " (map (\n -> T.concat ["[", jsonStr n, ", 0]"]) binders), "]"]
-     in T.concat ["{\"con\": \"_\", \"binders\": ", bs, ", \"body\": ", expToJson body, "}"]
+mruleToIR :: MRule -> IR.Branch
+mruleToIR (MRule pat body) =
+    let binders = smlPatNames pat
+     in IR.Branch (IR.PatCon (IR.localName "_") (map (\n -> IR.PatBinder (IR.name n) Nothing) binders)) (expToIR body)
 
 -- | Extract the name from a simple pattern.
-patName :: Pat -> Maybe String
-patName = \case
+smlPatName :: Pat -> Maybe String
+smlPatName = \case
     PVar (VId n) -> Just (T.unpack n)
-    PPos _ p -> patName p
-    PTyped p _ -> patName p
+    PPos _ p -> smlPatName p
+    PTyped p _ -> smlPatName p
     _ -> Nothing
 
-patNames :: Pat -> [Text]
-patNames = \case
+smlPatNames :: Pat -> [Text]
+smlPatNames = \case
     PVar (VId n) -> [n]
-    PTuple ps -> concatMap patNames ps
-    PAs (VId n) p -> n : patNames p
-    PPos _ p -> patNames p
-    PTyped p _ -> patNames p
+    PTuple ps -> concatMap smlPatNames ps
+    PAs (VId n) p -> n : smlPatNames p
+    PPos _ p -> smlPatNames p
+    PTyped p _ -> smlPatNames p
     _ -> ["_"]
 
 expArity :: Exp -> Int
 expArity = \case EFn _ -> 1; _ -> 0
 
-emitDef :: String -> Text -> Text -> Int -> Text
-emitDef name ty bodyJson arity =
-    T.concat
-        [ "    {\n"
-        , "      \"name\": {\"module\": \"\", \"text\": "
-        , jsonStr (T.pack name)
-        , ", \"unique\": 0},\n"
-        , "      \"type\": "
-        , ty
-        , ",\n"
-        , "      \"expr\": "
-        , bodyJson
-        , ",\n"
-        , "      \"sort\": \"fun\",\n"
-        , "      \"visibility\": \"public\",\n"
-        , "      \"arity\": "
-        , T.pack (show arity)
-        , "\n"
-        , "    }"
-        ]
-
-datbindToDef :: DatBind -> [Text]
+datbindToDef :: DatBind -> [IR.Definition]
 datbindToDef (DatBind _ (TyCon tcName) conbinds) =
     map (conbindToDef tcName) (NE.toList conbinds)
 
-conbindToDef :: Text -> ConBind -> Text
+conbindToDef :: Text -> ConBind -> IR.Definition
 conbindToDef tcName (ConBind (VId cname) argTy) =
-    let arity = case argTy of Nothing -> (0 :: Int); Just _ -> 1
-     in T.concat
-            [ "    {\n"
-            , "      \"name\": {\"module\": \"\", \"text\": "
-            , jsonStr cname
-            , ", \"unique\": 0},\n"
-            , "      \"type\": {\"tag\": \"con\", \"name\": "
-            , jsonStr tcName
-            , "},\n"
-            , "      \"expr\": {\"tag\": \"con\", \"name\": "
-            , jsonStr cname
-            , "},\n"
-            , "      \"sort\": \"con\",\n"
-            , "      \"visibility\": \"public\",\n"
-            , "      \"arity\": "
-            , T.pack (show arity)
-            , "\n"
-            , "    }"
-            ]
-
-jsonStr :: Text -> Text
-jsonStr t = T.concat ["\"", T.concatMap esc t, "\""]
-  where
-    esc '"' = "\\\""; esc '\\' = "\\\\"; esc '\n' = "\\n"; esc '\t' = "\\t"; esc c = T.singleton c
+    let arity = case argTy of Nothing -> 0; Just _ -> 1
+     in IR.conDef cname (IR.tCon tcName) arity
