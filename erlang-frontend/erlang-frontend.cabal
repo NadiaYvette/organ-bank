@@ -1,0 +1,39 @@
+cabal-version: 3.0
+name:          erlang-frontend
+version:       0.1.0
+synopsis:      Independent Erlang frontend emitting OrganIR JSON
+description:
+  A from-scratch Erlang frontend: lexer, expression/pattern parser with
+  operator precedence, clause grouping by function name/arity with guard
+  sequences, and translation to OrganIR JSON for consumption by Frankenstein.
+license:       GPL-2.0-only
+build-type:    Simple
+
+library
+  default-language: GHC2024
+  default-extensions: OverloadedStrings
+  hs-source-dirs: src
+  exposed-modules:
+    ErlangFrontend.Lexer
+    ErlangFrontend.AST
+    ErlangFrontend.Parser
+    ErlangFrontend.ToOrganIR
+  build-depends:
+    base >= 4.20 && < 5,
+    text,
+    containers,
+    organ-ir
+  ghc-options: -Wall
+
+executable erlang-organ-fe
+  default-language: GHC2024
+  default-extensions: OverloadedStrings
+  hs-source-dirs: app
+  main-is: Main.hs
+  build-depends:
+    base >= 4.20 && < 5,
+    text,
+    filepath,
+    erlang-frontend,
+    organ-ir
+  ghc-options: -Wall

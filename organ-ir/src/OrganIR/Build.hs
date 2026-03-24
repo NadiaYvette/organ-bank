@@ -169,3 +169,17 @@ eOr :: [Expr] -> Expr
 eOr [] = ELit (LitBool False)
 eOr [x] = x
 eOr (x : xs) = eIf x (ELit (LitBool True)) (eOr xs)
+
+-- | Function definition with explicit name/arity key (for Prolog/Erlang predicate grouping).
+funDefNA :: Text -> Int -> Expr -> Definition
+funDefNA n arity body = Definition (localName n) TAny body SFun Public arity
+
+{- | Guarded branch: if guard succeeds, evaluate body; otherwise fall through.
+Translates guard sequences (Erlang `when G1, G2`) to conjunctive tests.
+-}
+eGuarded :: Expr -> Expr -> Expr -> Expr
+eGuarded = eIf
+
+-- | Case expression on a single scrutinee with pattern-body pairs.
+eMatch :: Expr -> [(Pat, Expr)] -> Expr
+eMatch scrut branches_ = ECase scrut (map (uncurry Branch) branches_)

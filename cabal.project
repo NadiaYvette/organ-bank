@@ -3,3 +3,4 @@ packages:
   sml-frontend/
   scheme-frontend/
   prolog-frontend/
+  erlang-frontend/
