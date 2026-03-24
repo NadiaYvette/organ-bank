@@ -40,6 +40,8 @@ data SourceLang
     | LCommonLisp
     | LScheme
     | LProlog
+    | LLua
+    | LForth
     deriving (Eq, Show)
 
 -- | Top-level OrganIR document.

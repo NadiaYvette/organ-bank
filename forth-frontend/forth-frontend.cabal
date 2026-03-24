@@ -1,0 +1,38 @@
+cabal-version: 3.0
+name:          forth-frontend
+version:       0.1.0
+synopsis:      Independent Forth frontend emitting OrganIR JSON
+description:
+  A from-scratch ANS Forth frontend: word-based lexer, structured parser
+  for definitions and control flow, and translation to OrganIR JSON for
+  consumption by Frankenstein.
+license:       GPL-2.0-only
+build-type:    Simple
+
+library
+  default-language: GHC2024
+  default-extensions: OverloadedStrings
+  hs-source-dirs: src
+  exposed-modules:
+    ForthFrontend.Lexer
+    ForthFrontend.AST
+    ForthFrontend.Parser
+    ForthFrontend.ToOrganIR
+  build-depends:
+    base >= 4.20 && < 5,
+    text,
+    organ-ir
+  ghc-options: -Wall
+
+executable forth-organ-fe
+  default-language: GHC2024
+  default-extensions: OverloadedStrings
+  hs-source-dirs: app
+  main-is: Main.hs
+  build-depends:
+    base >= 4.20 && < 5,
+    text,
+    filepath,
+    forth-frontend,
+    organ-ir
+  ghc-options: -Wall

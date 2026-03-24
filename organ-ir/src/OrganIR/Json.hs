@@ -224,6 +224,8 @@ sourceLangText = \case
     LCommonLisp -> "common-lisp"
     LScheme -> "scheme"
     LProlog -> "prolog"
+    LLua -> "lua"
+    LForth -> "forth"
 
 sortText :: Sort -> Text
 sortText = \case SFun -> "fun"; SVal -> "val"; SExternal -> "external"; SCon -> "con"

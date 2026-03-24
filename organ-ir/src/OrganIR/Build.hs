@@ -183,3 +183,15 @@ eGuarded = eIf
 -- | Case expression on a single scrutinee with pattern-body pairs.
 eMatch :: Expr -> [(Pat, Expr)] -> Expr
 eMatch scrut branches_ = ECase scrut (map (uncurry Branch) branches_)
+
+-- | Simple value definition (untyped).
+valDefSimple :: Text -> Expr -> Definition
+valDefSimple n body = Definition (localName n) TAny body SVal Public 0
+
+-- | N-ary let: bind a list of (name, expr) pairs, then evaluate body.
+eLet :: [(Text, Expr)] -> Expr -> Expr
+eLet binds = ELet (map (\(n, e) -> LetBind (name n) Nothing e) binds)
+
+-- | Nil / unit literal (represented as the atom "nil").
+eNil :: Expr
+eNil = ECon (localName "nil") []

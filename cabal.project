@@ -4,3 +4,5 @@ packages:
   scheme-frontend/
   prolog-frontend/
   erlang-frontend/
+  lua-frontend/
+  forth-frontend/

@@ -1,0 +1,39 @@
+cabal-version: 3.0
+name:          lua-frontend
+version:       0.1.0
+synopsis:      Independent Lua frontend emitting OrganIR JSON
+description:
+  A from-scratch Lua 5.4 frontend: lexer, recursive-descent parser with
+  operator precedence, and translation to OrganIR JSON for consumption
+  by Frankenstein.
+license:       GPL-2.0-only
+build-type:    Simple
+
+library
+  default-language: GHC2024
+  default-extensions: OverloadedStrings
+  hs-source-dirs: src
+  exposed-modules:
+    LuaFrontend.Lexer
+    LuaFrontend.AST
+    LuaFrontend.Parser
+    LuaFrontend.ToOrganIR
+  build-depends:
+    base >= 4.20 && < 5,
+    text,
+    containers,
+    organ-ir
+  ghc-options: -Wall
+
+executable lua-organ-fe
+  default-language: GHC2024
+  default-extensions: OverloadedStrings
+  hs-source-dirs: app
+  main-is: Main.hs
+  build-depends:
+    base >= 4.20 && < 5,
+    text,
+    filepath,
+    lua-frontend,
+    organ-ir
+  ghc-options: -Wall
