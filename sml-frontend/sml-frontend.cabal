@@ -12,7 +12,7 @@ build-type:    Simple
 
 library
   default-language: GHC2024
-  default-extensions: OverloadedStrings
+  default-extensions: OverloadedStrings, ViewPatterns
   hs-source-dirs: src
   exposed-modules:
     SmlFrontend.Syntax.Ident
@@ -30,7 +30,8 @@ library
     base >= 4.20 && < 5,
     text,
     containers,
-    transformers
+    transformers,
+    extra
   ghc-options: -Wall
 
 executable sml-organ-fe

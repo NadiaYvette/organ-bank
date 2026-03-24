@@ -14,14 +14,16 @@ module SmlFrontend.Elab.Infer (
 )
 where
 
-import Control.Monad (zipWithM_, (>=>))
+import Control.Applicative ((<|>))
+import Control.Monad (mapAndUnzipM, zipWithM_, (>=>))
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Except
 import Control.Monad.Trans.State.Strict
-import Data.List (nub, (\\))
+import Data.List.Extra (nubOrd, (\\))
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Map.Strict qualified as Map
 import Data.Text qualified as T
+import Data.Tuple.Extra (firstM)
 import SmlFrontend.Elab.Env
 import SmlFrontend.Elab.Types
 import SmlFrontend.Syntax.AST
@@ -43,9 +45,7 @@ initInferState = InferState 0 emptySubst
 type InferM a = ExceptT String (State InferState) a
 
 runInfer :: InferState -> InferM a -> Either String (a, InferState)
-runInfer st m =
-    let (result, st') = runState (runExceptT m) st
-     in (,st') <$> result
+runInfer st (runExceptT -> e) = firstM id $ runState e st
 
 ------------------------------------------------------------------------
 -- Monadic primitives (Jones-style)
@@ -164,21 +164,22 @@ generalize t isValue = do
     env <- getEnv
     s <- lift $ gets isSubst
     let envFree = ftvEnv (applySubstEnv s env)
-        tyFree = nub (ftv t')
+        tyFree = nubOrd (ftv t')
         genVars = if isValue then tyFree \\ envFree else []
     pure (Scheme genVars t')
 
 -- | Is an expression syntactically a value? (Value restriction)
 isSyntacticValue :: Exp -> Bool
-isSyntacticValue (EVar _) = True
-isSyntacticValue (ESCon _) = True
-isSyntacticValue (EFn _) = True
-isSyntacticValue (ETuple es) = all isSyntacticValue es
-isSyntacticValue (EList es) = all isSyntacticValue es
-isSyntacticValue (ERecord fs) = all (isSyntacticValue . snd) fs
-isSyntacticValue (ETyped e _) = isSyntacticValue e
-isSyntacticValue (EPos _ e) = isSyntacticValue e
-isSyntacticValue _ = False
+isSyntacticValue = \case
+    EVar _ -> True
+    ESCon _ -> True
+    EFn _ -> True
+    ETuple es -> all isSyntacticValue es
+    EList es -> all isSyntacticValue es
+    ERecord fs -> all (isSyntacticValue . snd) fs
+    ETyped e _ -> isSyntacticValue e
+    EPos _ e -> isSyntacticValue e
+    _ -> False
 
 ------------------------------------------------------------------------
 -- Variable lookup
@@ -188,13 +189,10 @@ isSyntacticValue _ = False
 lookupVar :: String -> InferM Scheme
 lookupVar x = do
     env <- getEnv
-    case lookupEnv x env of
-        Just s -> return s
-        Nothing -> do
-            cenv <- getConEnv
-            case lookupCon x cenv of
-                Just (s, _) -> return s
-                Nothing -> throwE $ "Unbound variable: " ++ x
+    cenv <- getConEnv
+    case lookupEnv x env <|> (fst <$> lookupCon x cenv) of
+        Just s -> pure s
+        Nothing -> throwE $ "Unbound variable: " ++ x
 
 ------------------------------------------------------------------------
 -- Expression inference
@@ -347,10 +345,8 @@ inferPat (PSCon (SString _)) = return ([], tyString)
 inferPat (PSCon (SChar _)) = return ([], tyChar)
 inferPat (PSCon (SWord _)) = return ([], tyInt)
 inferPat (PTuple pats) = do
-    results <- mapM inferPat pats
-    let bindings = concatMap fst results
-        types = map snd results
-    return (bindings, ITyTuple types)
+    (bindingsList, types) <- mapAndUnzipM inferPat pats
+    pure (concat bindingsList, ITyTuple types)
 inferPat (PList []) = do a <- fresh; return ([], tyList a)
 inferPat (PList (p : ps)) = do
     (bs1, t) <- inferPat p
@@ -450,15 +446,9 @@ inferFunBind (FunBind clauses@(FunClause (VId name) _ _ _ :| _)) = do
 
 inferFunClause :: ITy -> FunClause -> InferM ()
 inferFunClause funTy (FunClause _ pats _retTy body) = do
-    -- Build function type from patterns
-    patResults <- mapM inferPat pats
-    let bindings = concatMap fst patResults
-        patTypes = map snd patResults
-    -- Infer body with pattern bindings in scope
-    bodyTy <- withBindings bindings (infer body)
-    -- Unify: funTy = pat1 -> pat2 -> ... -> bodyTy
-    let fullTy = foldr ITyFun bodyTy patTypes
-    unify funTy fullTy
+    (bindingsList, patTypes) <- mapAndUnzipM inferPat pats
+    bodyTy <- withBindings (concat bindingsList) (infer body)
+    unify funTy (foldr ITyFun bodyTy patTypes)
 
 inferDatBind :: DatBind -> InferM ()
 inferDatBind (DatBind tyvars (TyCon tcName) conbinds) = do
