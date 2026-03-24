@@ -1,6 +1,7 @@
 -- | sml-organ-fe: Independent Standard ML frontend emitting OrganIR JSON.
 module Main (main) where
 
+import Data.Function.Syntax ((-.))
 import Data.Text (Text)
 import Data.Text.IO qualified as TIO
 import SmlFrontend.Basis (initialConEnv, initialEnv)
@@ -24,13 +25,11 @@ main =
 run :: FilePath -> IO ()
 run path =
     TIO.readFile path
-        >>= ( \case
-                Left err -> do
-                    hPutStrLn stderr $ "Error: " ++ err
-                    exitFailure
-                Right json -> TIO.putStr json
-            )
-            . pipeline path
+        >>= pipeline path -. \case
+            Left err -> do
+                hPutStrLn stderr $ "Error: " ++ err
+                exitFailure
+            Right json -> TIO.putStr json
 
 pipeline :: FilePath -> Text -> Either String Text
 pipeline path src = do

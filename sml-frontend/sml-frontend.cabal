@@ -42,5 +42,6 @@ executable sml-organ-fe
     base >= 4.20 && < 5,
     text,
     filepath,
+    composition-extra,
     sml-frontend
   ghc-options: -Wall
