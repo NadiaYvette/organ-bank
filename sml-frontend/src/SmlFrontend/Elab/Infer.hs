@@ -14,7 +14,7 @@ module SmlFrontend.Elab.Infer (
 )
 where
 
-import Control.Monad ((>=>))
+import Control.Monad (zipWithM_, (>=>))
 import Control.Monad.Trans.Class (lift)
 import Control.Monad.Trans.Except
 import Control.Monad.Trans.State.Strict
@@ -43,9 +43,9 @@ initInferState = InferState 0 emptySubst
 type InferM a = ExceptT String (State InferState) a
 
 runInfer :: InferState -> InferM a -> Either String (a, InferState)
-runInfer st m = case runState (runExceptT m) st of
-    (Left err, _) -> Left err
-    (Right a, st') -> Right (a, st')
+runInfer st m =
+    let (result, st') = runState (runExceptT m) st
+     in (,st') <$> result
 
 ------------------------------------------------------------------------
 -- Monadic primitives (Jones-style)
@@ -54,10 +54,9 @@ runInfer st m = case runState (runExceptT m) st of
 -- | Generate a fresh unification variable.
 fresh :: InferM ITy
 fresh = do
-    st <- lift get
-    let u = isSupply st
-    lift $ put st{isSupply = u + 1}
-    return (ITyVar u)
+    u <- lift $ gets isSupply
+    lift $ modify' $ \st -> st{isSupply = u + 1}
+    pure (ITyVar u)
 
 {- | Apply the current substitution to a type, chasing all bindings.
 This is the central operation of the monadic substitution approach:
@@ -66,14 +65,12 @@ instead of threading 'Subst' values explicitly, callers simply
 -}
 zonk :: ITy -> InferM ITy
 zonk ty = do
-    s <- isSubst <$> lift get
-    return (apply s ty)
+    s <- lift $ gets isSubst
+    pure (apply s ty)
 
 -- | Extend the substitution: bind a unification variable to a type.
 addSubst :: TyUID -> ITy -> InferM ()
-addSubst u t = do
-    st <- lift get
-    lift $ put st{isSubst = Map.insert u t (isSubst st)}
+addSubst u t = lift $ modify' $ \st -> st{isSubst = Map.insert u t (isSubst st)}
 
 ------------------------------------------------------------------------
 -- Monadic environment operations
@@ -81,23 +78,19 @@ addSubst u t = do
 
 -- | Read the current type environment.
 getEnv :: InferM TyEnv
-getEnv = isEnv <$> lift get
+getEnv = lift $ gets isEnv
 
 -- | Read the current constructor environment.
 getConEnv :: InferM ConEnv
-getConEnv = isConEnv <$> lift get
+getConEnv = lift $ gets isConEnv
 
 -- | Modify the type environment.
 modifyEnv :: (TyEnv -> TyEnv) -> InferM ()
-modifyEnv f = do
-    st <- lift get
-    lift $ put st{isEnv = f (isEnv st)}
+modifyEnv f = lift $ modify' $ \st -> st{isEnv = f (isEnv st)}
 
 -- | Modify the constructor environment.
 modifyConEnv :: (ConEnv -> ConEnv) -> InferM ()
-modifyConEnv f = do
-    st <- lift get
-    lift $ put st{isConEnv = f (isConEnv st)}
+modifyConEnv f = lift $ modify' $ \st -> st{isConEnv = f (isConEnv st)}
 
 {- | Run an action with extra bindings in scope, then restore the
 original environment. This captures the save/restore pattern that
@@ -126,14 +119,14 @@ unify' :: ITy -> ITy -> InferM ()
 unify' (ITyVar u) t = bindVar u t
 unify' t (ITyVar u) = bindVar u t
 unify' (ITyCon c1 as1) (ITyCon c2 as2)
-    | c1 == c2 && length as1 == length as2 = mapM_ (uncurry unify) (zip as1 as2)
+    | c1 == c2 && length as1 == length as2 = zipWithM_ unify as1 as2
     | otherwise = throwE $ "Cannot unify " ++ c1 ++ " with " ++ c2
 unify' (ITyFun a1 r1) (ITyFun a2 r2) = unify a1 a2 >> unify r1 r2
 unify' (ITyTuple ts1) (ITyTuple ts2)
-    | length ts1 == length ts2 = mapM_ (uncurry unify) (zip ts1 ts2)
+    | length ts1 == length ts2 = zipWithM_ unify ts1 ts2
     | otherwise = throwE "Tuple type mismatch"
 unify' (ITyRecord fs1) (ITyRecord fs2)
-    | map fst fs1 == map fst fs2 = mapM_ (uncurry unify) (zip (map snd fs1) (map snd fs2))
+    | map fst fs1 == map fst fs2 = zipWithM_ unify (map snd fs1) (map snd fs2)
     | otherwise = throwE "Record type mismatch"
 unify' t1 t2 = throwE $ "Cannot unify " ++ show t1 ++ " with " ++ show t2
 
@@ -169,11 +162,11 @@ generalize :: ITy -> Bool -> InferM Scheme
 generalize t isValue = do
     t' <- zonk t
     env <- getEnv
-    s <- isSubst <$> lift get
+    s <- lift $ gets isSubst
     let envFree = ftvEnv (applySubstEnv s env)
         tyFree = nub (ftv t')
         genVars = if isValue then tyFree \\ envFree else []
-    return (Scheme genVars t')
+    pure (Scheme genVars t')
 
 -- | Is an expression syntactically a value? (Value restriction)
 isSyntacticValue :: Exp -> Bool
@@ -497,6 +490,4 @@ inferDatBind (DatBind tyvars (TyCon tcName) conbinds) = do
 
 -- | Run inference on a whole program.
 inferProgram :: InferState -> Program -> Either String InferState
-inferProgram st (Program decs) = case runInfer st (mapM_ inferDec decs) of
-    Left err -> Left err
-    Right ((), st') -> Right st'
+inferProgram st (Program decs) = snd <$> runInfer st (mapM_ inferDec decs)

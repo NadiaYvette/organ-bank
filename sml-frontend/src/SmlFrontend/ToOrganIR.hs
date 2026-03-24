@@ -68,10 +68,7 @@ funBindToDef st (FunBind clauses@(FunClause (VId name) pats _ _ :| _)) =
 
 clauseToJson :: FunClause -> Text
 clauseToJson (FunClause _ pats _ body) =
-    let _patJson = case pats of
-            [p] -> patToJson p
-            _ -> T.concat ["{\"tag\": \"tuple\", \"elements\": [", T.intercalate ", " (map patToJson pats), "]}"]
-        binderNames = concatMap patNames pats
+    let binderNames = concatMap patNames pats
         binders = T.concat ["[", T.intercalate ", " (map (\n -> T.concat ["[", jsonStr n, ", 0]"]) binderNames), "]"]
      in T.concat ["{\"con\": \"_\", \"binders\": ", binders, ", \"body\": ", expToJson body, "}"]
 
@@ -152,9 +149,7 @@ expToJson (ETuple es) = T.concat ["{\"tag\": \"tuple\", \"elements\": [", T.inte
 expToJson (EList es) = T.concat ["{\"tag\": \"list\", \"elements\": [", T.intercalate ", " (map expToJson es), "]}"]
 expToJson (ERaise e) = T.concat ["{\"tag\": \"raise\", \"exn\": ", expToJson e, "}"]
 expToJson (ESeq []) = "{\"tag\": \"tuple\", \"elements\": []}"
-expToJson (ESeq es) = case NE.nonEmpty es of
-    Just ne -> expToJson (NE.last ne)
-    Nothing -> "{\"tag\": \"tuple\", \"elements\": []}"
+expToJson (ESeq (e : es)) = expToJson (NE.last (e :| es))
 expToJson (EAndalso a b) = expToJson (EIf a b (EVar (LongVId [] (VId "false"))))
 expToJson (EOrelse a b) = expToJson (EIf a (EVar (LongVId [] (VId "true"))) b)
 expToJson (ETyped e _) = expToJson e
@@ -166,13 +161,6 @@ mruleToJson (MRule pat body) =
     let binders = patNames pat
         bs = T.concat ["[", T.intercalate ", " (map (\n -> T.concat ["[", jsonStr n, ", 0]"]) binders), "]"]
      in T.concat ["{\"con\": \"_\", \"binders\": ", bs, ", \"body\": ", expToJson body, "}"]
-
-patToJson :: Pat -> Text
-patToJson (PVar (VId n)) = T.concat ["{\"tag\": \"var\", \"name\": ", jsonStr n, "}"]
-patToJson PWild = "{\"tag\": \"wild\"}"
-patToJson (PSCon (SInt n)) = T.concat ["{\"tag\": \"lit\", \"value\": ", T.pack (show n), "}"]
-patToJson (PCon (LongVId _ (VId n)) _) = T.concat ["{\"tag\": \"con\", \"name\": ", jsonStr n, "}"]
-patToJson _ = "{\"tag\": \"wild\"}"
 
 -- | Extract the name from a simple pattern.
 patName :: Pat -> Maybe String
