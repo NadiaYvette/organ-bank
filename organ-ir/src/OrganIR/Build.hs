@@ -1,7 +1,9 @@
 -- | Smart constructors for building OrganIR values.
 module OrganIR.Build where
 
+import Data.List.NonEmpty qualified as NE
 import Data.Text (Text)
+import Data.Text qualified as T
 import OrganIR.Types
 
 -- * Names
@@ -25,6 +27,14 @@ organIR :: SourceLang -> Text -> Text -> [Definition] -> OrganIR
 organIR lang shimVer modName defs =
     OrganIR
         { irMetadata = Metadata lang Nothing Nothing shimVer Nothing
+        , irModule = Module modName [] defs [] []
+        }
+
+-- | Build an OrganIR document with source file.
+simpleOrganIR :: SourceLang -> Text -> Text -> FilePath -> [Definition] -> OrganIR
+simpleOrganIR lang shimVer modName srcFile defs =
+    OrganIR
+        { irMetadata = Metadata lang Nothing (Just (T.pack srcFile)) shimVer Nothing
         , irModule = Module modName [] defs [] []
         }
 
@@ -122,3 +132,40 @@ pVar = flip PatVar Nothing . name
 -- | Constructor pattern with named binders.
 pCon :: Text -> [Text] -> Pat
 pCon c bs = PatCon (localName c) (map (\b -> PatBinder (name b) Nothing) bs)
+
+-- * Branches
+
+-- | Case branch with a constructor pattern and named binders.
+branch :: Text -> [Text] -> Expr -> Branch
+branch con binders = Branch (pCon con binders)
+
+-- * Compound expressions
+
+-- | Boolean if-then-else as a case on true/false.
+eIf :: Expr -> Expr -> Expr -> Expr
+eIf scrut t f =
+    ECase scrut [branch "true" [] t, branch "false" [] f]
+
+{- | Sequence of expressions: evaluate all, return the last.
+Single expression is returned as-is; empty returns void (false).
+-}
+eSeq :: [Expr] -> Expr
+eSeq [] = ELit (LitBool False)
+eSeq [x] = x
+eSeq xs =
+    let ne = NE.fromList xs -- safe: [] and [x] handled above
+     in ELet
+            (zipWith (\i e -> LetBind (name (T.pack ("_seq" ++ show i))) Nothing e) [(0 :: Int) ..] (NE.init ne))
+            (NE.last ne)
+
+-- | Conjunction: evaluate all, short-circuit on false.
+eAnd :: [Expr] -> Expr
+eAnd [] = ELit (LitBool True)
+eAnd [x] = x
+eAnd (x : xs) = eIf x (eAnd xs) (ELit (LitBool False))
+
+-- | Disjunction: evaluate all, short-circuit on true.
+eOr :: [Expr] -> Expr
+eOr [] = ELit (LitBool False)
+eOr [x] = x
+eOr (x : xs) = eIf x (ELit (LitBool True)) (eOr xs)
