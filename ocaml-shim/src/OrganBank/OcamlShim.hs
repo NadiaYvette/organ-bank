@@ -399,6 +399,7 @@ emitOrganIR shimVer modName srcFile defs exports =
             IR.Module
                 (T.pack modName)
                 (map T.pack exports)
+                []
                 (map (defToIR modName) defs)
                 []
                 []

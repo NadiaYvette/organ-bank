@@ -14,6 +14,7 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import GHC
 import GHC.Core (CoreBind, CoreExpr, CoreProgram, Bind (..), Expr (..), Alt (..), AltCon (..))
+import GHC.Types.SrcLoc (unLoc)
 import GHC.Core.DataCon (dataConName)
 import GHC.Core.TyCo.Rep (Type (..))
 import GHC.Core.TyCon (tyConName)
@@ -51,18 +52,26 @@ extractOrganIR inputPath = do
         let modGuts  = dm_core_module desugared
             coreProg = mg_binds modGuts
             modName  = moduleNameString (moduleName (ms_mod ms))
-        pure $ Right $ emitOrganIR modName inputPath coreProg
+            imports  = extractImports ms
+        pure $ Right $ emitOrganIR modName inputPath imports coreProg
 
 detectLibDir :: IO FilePath
 detectLibDir = do
   raw <- readProcess "ghc" ["--print-libdir"] ""
   pure $ reverse $ dropWhile (== '\n') $ reverse raw
 
+-- | Extract module imports from a ModSummary using ms_textual_imps.
+extractImports :: ModSummary -> [IR.QName]
+extractImports ms =
+    [ IR.QName (T.pack (moduleNameString (unLoc impMod))) (IR.Name "*" 0)
+    | (_, impMod) <- ms_textual_imps ms
+    ]
+
 -- | Emit a CoreProgram as OrganIR JSON using the organ-ir library.
-emitOrganIR :: String -> FilePath -> CoreProgram -> Text
-emitOrganIR modName srcFile binds =
+emitOrganIR :: String -> FilePath -> [IR.QName] -> CoreProgram -> Text
+emitOrganIR modName srcFile imports binds =
     renderOrganIR $
-        IR.simpleOrganIR IR.LHaskell "ghc-shim-0.1" (T.pack modName) srcFile $
+        IR.organIRWithImports IR.LHaskell "ghc-shim-0.1" (T.pack modName) srcFile [] imports $
             concatMap bindToDefs binds
 
 -- | Convert a CoreBind into OrganIR definitions.

@@ -28,6 +28,7 @@ emitSchemeIR modName srcFile tops =
                     Module
                         { modName = T.pack modName
                         , modExports = exports
+                        , modImports = []
                         , modDefs = defs
                         , modDataTypes = []
                         , modEffectDecls = []

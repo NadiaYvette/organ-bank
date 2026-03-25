@@ -27,7 +27,7 @@ organIR :: SourceLang -> Text -> Text -> [Definition] -> OrganIR
 organIR lang shimVer modName defs =
     OrganIR
         { irMetadata = Metadata lang Nothing Nothing shimVer Nothing
-        , irModule = Module modName [] defs [] []
+        , irModule = Module modName [] [] defs [] []
         }
 
 -- | Build an OrganIR document with source file.
@@ -35,7 +35,7 @@ simpleOrganIR :: SourceLang -> Text -> Text -> FilePath -> [Definition] -> Organ
 simpleOrganIR lang shimVer modName srcFile defs =
     OrganIR
         { irMetadata = Metadata lang Nothing (Just (T.pack srcFile)) shimVer Nothing
-        , irModule = Module modName [] defs [] []
+        , irModule = Module modName [] [] defs [] []
         }
 
 -- | Like simpleOrganIR but with explicit exports list.
@@ -43,7 +43,15 @@ organIRWithExports :: SourceLang -> Text -> Text -> FilePath -> [Text] -> [Defin
 organIRWithExports lang shimVer modName srcFile exports defs =
     OrganIR
         { irMetadata = Metadata lang Nothing (Just (T.pack srcFile)) shimVer Nothing
-        , irModule = Module modName exports defs [] []
+        , irModule = Module modName exports [] defs [] []
+        }
+
+-- | Like organIRWithExports but also with explicit imports list.
+organIRWithImports :: SourceLang -> Text -> Text -> FilePath -> [Text] -> [QName] -> [Definition] -> OrganIR
+organIRWithImports lang shimVer modName srcFile exports imports defs =
+    OrganIR
+        { irMetadata = Metadata lang Nothing (Just (T.pack srcFile)) shimVer Nothing
+        , irModule = Module modName exports imports defs [] []
         }
 
 -- | Build a full OrganIR document.

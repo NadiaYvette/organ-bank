@@ -21,6 +21,7 @@ ppOrganIR ir =
                     <> ")"
                 )
                     : maybe [] (\sf -> ["-- source: " <> sf]) (metaSourceFile meta)
+                    ++ ["-- imports: " <> T.intercalate ", " (map ppQName (modImports m)) | not (null (modImports m))]
         defs = T.intercalate "\n\n" (map ppDefinition (modDefs m))
         dts = T.intercalate "\n\n" (map ppDataType (modDataTypes m))
         effs = T.intercalate "\n\n" (map ppEffectDecl (modEffectDecls m))

@@ -37,11 +37,29 @@ validateMetadata m
 validateModule :: Module -> [Warning]
 validateModule m =
     [Warning Error "module.name" "module name is empty" | T.null (modName m)]
+        <> validateImports m
         <> concatMap (\(i, d) -> validateDef (defPath i) d) (zip [(0 :: Int) ..] (modDefs m))
         <> concatMap (\(i, dt) -> validateDataType (dtPath i) dt) (zip [(0 :: Int) ..] (modDataTypes m))
   where
     defPath i = "module.definitions[" <> T.pack (show i) <> "]"
     dtPath i = "module.dataTypes[" <> T.pack (show i) <> "]"
+
+-- | Check that imported names do not shadow local definitions.
+validateImports :: Module -> [Warning]
+validateImports m =
+    let localNames = map (nameText . qnName . defName) (modDefs m)
+        importNames = map (nameText . qnName) (modImports m)
+        shadows = filter (`elem` localNames) importNames
+     in map
+            ( \n ->
+                Warning
+                    Warn
+                    "module.imports"
+                    ("imported name " <> quote n <> " shadows a local definition")
+            )
+            shadows
+  where
+    quote s = "\"" <> s <> "\""
 
 -- * Definitions
 

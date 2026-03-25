@@ -62,7 +62,7 @@ extractOrganIR inputPath = do
                     renderOrganIR $
                         IR.OrganIR
                             { IR.irMetadata = IR.Metadata IR.LMercury Nothing Nothing shimVer Nothing
-                            , IR.irModule = IR.Module (T.pack modName) exports defs [] []
+                            , IR.irModule = IR.Module (T.pack modName) exports [] defs [] []
                             }
             pure $ Right ir
 

@@ -728,7 +728,7 @@ moduleToIR shimVer m =
         exports = map odName (omDefs m)
     in  IR.OrganIR
             { IR.irMetadata = IR.Metadata IR.LKoka Nothing Nothing shimVer Nothing
-            , IR.irModule = IR.Module (omName m) exports defs [] []
+            , IR.irModule = IR.Module (omName m) exports [] defs [] []
             }
 
 defToIR :: OrganDef -> IR.Definition

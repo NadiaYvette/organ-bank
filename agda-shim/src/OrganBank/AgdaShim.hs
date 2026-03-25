@@ -654,7 +654,7 @@ readIntMaybe txt = case reads (T.unpack txt) of
 emitOrganIR :: Text -> String -> FilePath -> String -> [MAlonzoDef] -> Text
 emitOrganIR shimVer modName srcFile agdaVer defs =
     let metadata = IR.Metadata IR.LAgda (Just (T.pack agdaVer)) (Just (T.pack srcFile)) shimVer Nothing
-     in renderOrganIR $ IR.OrganIR metadata (IR.Module (T.pack modName) [] (zipWith defToIR [1 ..] defs) [] [])
+     in renderOrganIR $ IR.OrganIR metadata (IR.Module (T.pack modName) [] [] (zipWith defToIR [1 ..] defs) [] [])
 
 defToIR :: Int -> MAlonzoDef -> IR.Definition
 defToIR uid def =

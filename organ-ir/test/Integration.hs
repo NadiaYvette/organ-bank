@@ -99,7 +99,7 @@ minimalIR =
 fullIR :: IR.OrganIR
 fullIR = IR.OrganIR
     { IR.irMetadata = IR.Metadata IR.LHaskell (Just "ghc-9.14.1") (Just "Full.hs") "test-0.1" Nothing
-    , IR.irModule = IR.Module "Full" ["main", "helper"]
+    , IR.irModule = IR.Module "Full" ["main", "helper"] []
         [ IR.funDef "main"
             (IR.TFn [IR.FnArg Nothing IR.TAny] (IR.EffectRow [IR.localName "IO"] Nothing) IR.TAny)
             (IR.ELam [IR.LamParam (IR.Name "args" 0) Nothing]
@@ -120,7 +120,7 @@ fullIR = IR.OrganIR
 effectsIR :: IR.OrganIR
 effectsIR = IR.OrganIR
     { IR.irMetadata = IR.Metadata IR.LKoka Nothing Nothing "test-0.1" Nothing
-    , IR.irModule = IR.Module "Effects" []
+    , IR.irModule = IR.Module "Effects" [] []
         [ IR.valDef "x" IR.TAny
             (IR.EHandle (IR.localName "State")
                 (IR.EPerform (IR.localName "State") "get" [])
@@ -146,7 +146,7 @@ helloIR :: IR.SourceLang -> Text -> Text -> Text -> IR.OrganIR
 helloIR lang shimVer fnName msg =
     IR.OrganIR
         { IR.irMetadata = IR.Metadata lang Nothing Nothing shimVer Nothing
-        , IR.irModule = IR.Module "hello" []
+        , IR.irModule = IR.Module "hello" [] []
             [ IR.valDef "main" IR.TAny
                 (IR.EApp (IR.EVar (IR.Name fnName 0)) [IR.ELit (IR.LitString msg)])
             ]

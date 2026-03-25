@@ -89,10 +89,12 @@ coreFnToOrganIR shimVer sourceFile coreFnText =
                 (Just (T.pack sourceFile))
                 shimVer
                 Nothing
+        imports = extractModuleImports coreFnText
         module_ =
             IR.Module
                 modName_
                 exports
+                imports
                 (zipWith (declToIR modName_) [1 ..] decls)
                 []
                 []
@@ -183,6 +185,31 @@ extractQuotedString = go T.empty
 -- | Take characters until a specific char is found (not included).
 takeUntilChar :: Char -> Text -> Text
 takeUntilChar c = T.takeWhile (/= c)
+
+{- | Extract module imports from the CoreFn JSON "imports" array.
+CoreFn imports have the form:
+  "imports": [{"annotation": {...}, "moduleName": ["Data", "Maybe"]}, ...]
+We extract each moduleName and represent it as a QName with the module path
+as the module prefix and "*" as the name (meaning "all exports from that module").
+-}
+extractModuleImports :: Text -> [IR.QName]
+extractModuleImports txt =
+    let needle = "\"imports\""
+     in case T.breakOn needle txt of
+            (_, rest)
+                | T.null rest -> []
+                | otherwise ->
+                    let afterKey = T.drop (T.length needle) rest
+                        afterColon = T.dropWhile (\c -> c == ' ' || c == ':' || c == '\n' || c == '\r' || c == '\t') afterKey
+                     in case T.uncons afterColon of
+                            Just ('[', arrBody) ->
+                                let objs = parseObjectArray arrBody
+                                 in map importObjToQName objs
+                            _ -> []
+  where
+    importObjToQName obj =
+        let modParts = extractJsonString "moduleName" obj
+         in IR.QName modParts (IR.Name "*" 0)
 
 {- | Extract declarations from the CoreFn JSON "decls" array.
 CoreFn decls have the form:

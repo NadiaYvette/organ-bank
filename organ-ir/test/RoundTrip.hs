@@ -124,7 +124,7 @@ testLang :: String -> IR.SourceLang -> IO Bool
 testLang nm lang = do
     let ir = IR.OrganIR
                 { IR.irMetadata = IR.Metadata lang Nothing Nothing "test-0.1" Nothing
-                , IR.irModule = IR.Module "Test" [] [IR.valDef "x" IR.TAny (IR.ELit (IR.LitInt 1))] [] []
+                , IR.irModule = IR.Module "Test" [] [] [IR.valDef "x" IR.TAny (IR.ELit (IR.LitInt 1))] [] []
                 }
     roundTrip nm ir
 
@@ -438,7 +438,7 @@ structTests =
       ( "DataType-with-constructors"
       , IR.OrganIR
             { IR.irMetadata = IR.Metadata IR.LHaskell Nothing Nothing "test-0.1" Nothing
-            , IR.irModule = IR.Module "Test" []
+            , IR.irModule = IR.Module "Test" [] []
                 [IR.valDef "x" IR.TAny (IR.ELit (IR.LitInt 0))]
                 [ IR.DataType (qn "Maybe")
                     [IR.TyVar (n "a") Nothing]
@@ -457,7 +457,7 @@ structTests =
       ( "DataType-with-kinded-params"
       , IR.OrganIR
             { IR.irMetadata = IR.Metadata IR.LHaskell Nothing Nothing "test-0.1" Nothing
-            , IR.irModule = IR.Module "Test" []
+            , IR.irModule = IR.Module "Test" [] []
                 [IR.valDef "x" IR.TAny (IR.ELit (IR.LitInt 0))]
                 [ IR.DataType (qn "App")
                     [IR.TyVar (n "f") (Just "Type -> Type"), IR.TyVar (n "a") (Just "Type")]
@@ -470,7 +470,7 @@ structTests =
       ( "EffectDecl-with-ops"
       , IR.OrganIR
             { IR.irMetadata = IR.Metadata IR.LKoka Nothing Nothing "test-0.1" Nothing
-            , IR.irModule = IR.Module "Test" []
+            , IR.irModule = IR.Module "Test" [] []
                 [IR.valDef "x" IR.TAny (IR.ELit (IR.LitInt 0))]
                 []
                 [ IR.EffectDecl (qn "State")
@@ -487,7 +487,7 @@ structTests =
       ( "EffectDecl-no-params"
       , IR.OrganIR
             { IR.irMetadata = IR.Metadata IR.LKoka Nothing Nothing "test-0.1" Nothing
-            , IR.irModule = IR.Module "Test" []
+            , IR.irModule = IR.Module "Test" [] []
                 [IR.valDef "x" IR.TAny (IR.ELit (IR.LitInt 0))]
                 []
                 [ IR.EffectDecl (qn "Console") []
@@ -499,10 +499,32 @@ structTests =
       ( "Module-with-exports"
       , IR.OrganIR
             { IR.irMetadata = IR.Metadata IR.LHaskell Nothing Nothing "test-0.1" Nothing
-            , IR.irModule = IR.Module "MyModule" ["foo", "bar", "baz"]
+            , IR.irModule = IR.Module "MyModule" ["foo", "bar", "baz"] []
                 [ IR.funDef "foo" (IR.TFn [IR.FnArg Nothing IR.TAny] (IR.EffectRow [] Nothing) IR.TAny) (IR.ELam [IR.LamParam (n "x") Nothing] (IR.EVar (n "x"))) 1
                 , IR.valDef "bar" IR.TAny (IR.ELit (IR.LitInt 42))
                 , IR.valDef "baz" IR.TAny (IR.ELit (IR.LitString "hello"))
+                ]
+                [] []
+            }
+      )
+    , -- Module with imports
+      ( "Module-with-imports"
+      , IR.OrganIR
+            { IR.irMetadata = IR.Metadata IR.LHaskell Nothing Nothing "test-0.1" Nothing
+            , IR.irModule = IR.Module "MyModule" []
+                [qnMod "Data.List" "map", qnMod "Data.Maybe" "fromMaybe", qnMod "Prelude" "putStrLn"]
+                [ IR.valDef "x" IR.TAny (IR.ELit (IR.LitInt 42))
+                ]
+                [] []
+            }
+      )
+    , -- Module with both imports and exports
+      ( "Module-with-imports-and-exports"
+      , IR.OrganIR
+            { IR.irMetadata = IR.Metadata IR.LHaskell Nothing Nothing "test-0.1" Nothing
+            , IR.irModule = IR.Module "MyModule" ["foo"]
+                [qnMod "Data.Text" "pack"]
+                [ IR.funDef "foo" (IR.TFn [IR.FnArg Nothing IR.TAny] (IR.EffectRow [] Nothing) IR.TAny) (IR.ELam [IR.LamParam (n "x") Nothing] (IR.EVar (n "x"))) 1
                 ]
                 [] []
             }
@@ -511,7 +533,7 @@ structTests =
       ( "Metadata-all-fields"
       , IR.OrganIR
             { IR.irMetadata = IR.Metadata IR.LRust (Just "rustc-1.75.0") (Just "src/main.rs") "test-0.1" (Just "2026-03-25T10:30:00Z")
-            , IR.irModule = IR.Module "Main" []
+            , IR.irModule = IR.Module "Main" [] []
                 [IR.valDef "x" IR.TAny (IR.ELit (IR.LitInt 0))]
                 [] []
             }
@@ -520,7 +542,7 @@ structTests =
       ( "Metadata-minimal"
       , IR.OrganIR
             { IR.irMetadata = IR.Metadata IR.LMercury Nothing Nothing "test-0.1" Nothing
-            , IR.irModule = IR.Module "Test" []
+            , IR.irModule = IR.Module "Test" [] []
                 [IR.valDef "x" IR.TAny (IR.ELit (IR.LitInt 0))]
                 [] []
             }
@@ -529,7 +551,7 @@ structTests =
       ( "Sort-all-variants"
       , IR.OrganIR
             { IR.irMetadata = IR.Metadata IR.LHaskell Nothing Nothing "test-0.1" Nothing
-            , IR.irModule = IR.Module "Test" []
+            , IR.irModule = IR.Module "Test" [] []
                 [ IR.Definition (IR.localName "myFun") (IR.TFn [IR.FnArg Nothing IR.TAny] (IR.EffectRow [] Nothing) IR.TAny) (IR.ELam [IR.LamParam (n "x") Nothing] (IR.EVar (n "x"))) IR.SFun IR.Public 1
                 , IR.Definition (IR.localName "myVal") IR.TAny (IR.ELit (IR.LitInt 42)) IR.SVal IR.Public 0
                 , IR.Definition (IR.localName "myExt") IR.TAny (IR.ELit (IR.LitInt 0)) IR.SExternal IR.Public 0
@@ -542,18 +564,19 @@ structTests =
       ( "Visibility-private"
       , IR.OrganIR
             { IR.irMetadata = IR.Metadata IR.LHaskell Nothing Nothing "test-0.1" Nothing
-            , IR.irModule = IR.Module "Test" []
+            , IR.irModule = IR.Module "Test" [] []
                 [ IR.Definition (IR.localName "pub") IR.TAny (IR.ELit (IR.LitInt 1)) IR.SVal IR.Public 0
                 , IR.Definition (IR.localName "priv") IR.TAny (IR.ELit (IR.LitInt 2)) IR.SVal IR.Private 0
                 ]
                 [] []
             }
       )
-    , -- Combined: DataType + EffectDecl + exports + multiple definitions
+    , -- Combined: DataType + EffectDecl + exports + imports + multiple definitions
       ( "Combined-full-module"
       , IR.OrganIR
             { IR.irMetadata = IR.Metadata IR.LHaskell (Just "ghc-9.14.1") (Just "Test.hs") "test-0.1" (Just "2026-03-25T12:00:00Z")
             , IR.irModule = IR.Module "Test" ["main", "helper"]
+                [qnMod "GHC.IO" "putStrLn"]
                 [ IR.funDef "main" (IR.TFn [IR.FnArg Nothing IR.TAny] (IR.EffectRow [qn "IO"] Nothing) IR.TAny)
                     (IR.ELam [IR.LamParam (n "args") Nothing]
                         (IR.EHandle (qn "IO")
@@ -578,7 +601,7 @@ structTests =
       ( "Name-unique-suffix"
       , IR.OrganIR
             { IR.irMetadata = IR.Metadata IR.LHaskell Nothing Nothing "test-0.1" Nothing
-            , IR.irModule = IR.Module "Test" []
+            , IR.irModule = IR.Module "Test" [] []
                 [ IR.Definition (IR.QName "" (IR.Name "x" 42)) IR.TAny (IR.EVar (IR.Name "y" 99)) IR.SVal IR.Public 0
                 ]
                 [] []
@@ -588,7 +611,7 @@ structTests =
       ( "QName-qualified"
       , IR.OrganIR
             { IR.irMetadata = IR.Metadata IR.LHaskell Nothing Nothing "test-0.1" Nothing
-            , IR.irModule = IR.Module "Test" []
+            , IR.irModule = IR.Module "Test" [] []
                 [ IR.Definition (qnMod "Data.List" "map") IR.TAny
                     (IR.EApp (IR.EVar (n "f")) [IR.ECon (qnMod "Data.Maybe" "Just") [IR.ELit (IR.LitInt 1)]])
                     IR.SVal IR.Public 0

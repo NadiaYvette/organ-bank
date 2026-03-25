@@ -39,6 +39,7 @@
       "properties": {
         "name": { "type": "string" },
         "exports": { "type": "array", "items": { "type": "string" } },
+        "imports": { "type": "array", "items": { "$ref": "#/$defs/qname" }, "description": "External symbols referenced by this module." },
         "definitions": { "type": "array", "items": { "$ref": "#/$defs/definition" } },
         "data_types": { "type": "array", "items": { "$ref": "#/$defs/data_type" } },
         "effect_decls": { "type": "array", "items": { "$ref": "#/$defs/effect_decl" } }

@@ -264,6 +264,7 @@ instance Arbitrary Module where
         <$> genIdent
         <*> resize 3 (listOf genIdent)
         <*> resize 3 (listOf arbitrary)
+        <*> resize 3 (listOf arbitrary)
         <*> resize 2 (listOf arbitrary)
         <*> resize 2 (listOf arbitrary)
 

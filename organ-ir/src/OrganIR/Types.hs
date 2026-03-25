@@ -65,6 +65,7 @@ data Metadata = Metadata
 data Module = Module
     { modName :: Text
     , modExports :: [Text]
+    , modImports :: [QName]
     , modDefs :: [Definition]
     , modDataTypes :: [DataType]
     , modEffectDecls :: [EffectDecl]

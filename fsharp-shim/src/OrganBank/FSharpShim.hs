@@ -757,7 +757,7 @@ emitOrganIR shimVer modName srcFile defs =
         exports = map (T.pack . fdName) defs
         irDefs = zipWith (translateDef (T.pack modName)) [0 ..] defs
         module_ =
-            IR.Module (T.pack modName) exports irDefs [] []
+            IR.Module (T.pack modName) exports [] irDefs [] []
      in renderOrganIR $ IR.OrganIR metadata module_
 
 translateDef :: Text -> Int -> FSDef -> IR.Definition

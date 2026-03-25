@@ -34,6 +34,7 @@ emitOrganIR modName srcFile (Program decs) st =
                     IR.Module
                         { IR.modName = T.pack modName
                         , IR.modExports = exports
+                        , IR.modImports = []
                         , IR.modDefs = defs
                         , IR.modDataTypes = []
                         , IR.modEffectDecls = []

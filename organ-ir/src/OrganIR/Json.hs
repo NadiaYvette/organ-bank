@@ -28,6 +28,7 @@ renderModule m =
     obj $
         ("name", str (modName m))
             : [("exports", arr (map str (modExports m))) | not (null (modExports m))]
+            ++ [("imports", arr (map renderQName (modImports m))) | not (null (modImports m))]
             ++ [("definitions", arr (map renderDef (modDefs m)))]
             ++ [("data_types", arr (map renderDataType (modDataTypes m))) | not (null (modDataTypes m))]
             ++ [("effect_decls", arr (map renderEffectDecl (modEffectDecls m))) | not (null (modEffectDecls m))]

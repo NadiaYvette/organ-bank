@@ -2,7 +2,7 @@
 Inverts every @render*@ function in "OrganIR.Json" to produce
 OrganIR types from JSON text, with no dependencies beyond base and text.
 -}
-module OrganIR.Parse (parseOrganIR, JVal (..), parseJSON) where
+module OrganIR.Parse (parseOrganIR, JVal (..), parseJSON, maxNestingDepth) where
 
 import Data.Char (chr, digitToInt, isDigit, isHexDigit, isSpace)
 import Data.Text (Text)
@@ -25,26 +25,36 @@ data JVal
 
 type P a = Text -> Either Text (a, Text)
 
+-- | Maximum nesting depth for JSON parsing to prevent stack overflow.
+maxNestingDepth :: Int
+maxNestingDepth = 200
+
 parseJSON :: Text -> Either Text JVal
 parseJSON t = do
-    (v, rest) <- pValue (skip t)
+    (v, rest) <- pValueD 0 (skip t)
     let rest' = skip rest
     if T.null rest'
         then Right v
         else Left $ "Trailing content: " <> T.take 40 rest'
 
-pValue :: P JVal
-pValue t
+-- | Parse a JSON value with depth tracking.
+pValueD :: Int -> P JVal
+pValueD depth t
+    | depth > maxNestingDepth = Left "Nesting too deep (> 200 levels)"
     | T.null t = Left "Unexpected end of input"
     | otherwise = case T.head t of
         '"' -> do (s, r) <- pString t; Right (JStr s, r)
-        '{' -> do (o, r) <- pObject (skip (T.tail t)); Right (JObj o, r)
-        '[' -> do (a, r) <- pArray (skip (T.tail t)); Right (JArr a, r)
+        '{' -> do (o, r) <- pObjectD (depth + 1) (skip (T.tail t)); Right (JObj o, r)
+        '[' -> do (a, r) <- pArrayD (depth + 1) (skip (T.tail t)); Right (JArr a, r)
         't' -> pLit "true" (JBool True) t
         'f' -> pLit "false" (JBool False) t
         'n' -> pLit "null" JNull t
         c | c == '-' || isDigit c -> pNumber t
         _ -> Left $ "Unexpected character: " <> T.take 1 t
+
+-- | Backward-compatible wrapper without depth tracking.
+pValue :: P JVal
+pValue = pValueD 0
 
 pLit :: Text -> JVal -> P JVal
 pLit expected val t
@@ -94,19 +104,25 @@ pNumber t =
                 _ -> Left $ "Bad number: " <> numStr
 
 pObject :: P [(Text, JVal)]
-pObject t
+pObject = pObjectD 0
+
+pObjectD :: Int -> P [(Text, JVal)]
+pObjectD depth t
     | not (T.null t) && T.head t == '}' = Right ([], T.tail t)
-    | otherwise = pObjEntries t
+    | otherwise = pObjEntriesD depth t
 
 pObjEntries :: P [(Text, JVal)]
-pObjEntries t = do
+pObjEntries = pObjEntriesD 0
+
+pObjEntriesD :: Int -> P [(Text, JVal)]
+pObjEntriesD depth t = do
     (k, rest) <- pString (skip t)
     rest' <- pColon (skip rest)
-    (v, rest'') <- pValue (skip rest')
+    (v, rest'') <- pValueD depth (skip rest')
     let rest''' = skip rest''
     case T.uncons rest''' of
         Just (',', more) -> do
-            (pairs, final) <- pObjEntries (skip more)
+            (pairs, final) <- pObjEntriesD depth (skip more)
             Right ((k, v) : pairs, final)
         Just ('}', more) -> Right ([(k, v)], more)
         _ -> Left "Expected ',' or '}' in object"
@@ -117,17 +133,23 @@ pColon t = case T.uncons t of
     _ -> Left "Expected ':'"
 
 pArray :: P [JVal]
-pArray t
+pArray = pArrayD 0
+
+pArrayD :: Int -> P [JVal]
+pArrayD depth t
     | not (T.null t) && T.head t == ']' = Right ([], T.tail t)
-    | otherwise = pArrElems t
+    | otherwise = pArrElemsD depth t
 
 pArrElems :: P [JVal]
-pArrElems t = do
-    (v, rest) <- pValue (skip t)
+pArrElems = pArrElemsD 0
+
+pArrElemsD :: Int -> P [JVal]
+pArrElemsD depth t = do
+    (v, rest) <- pValueD depth (skip t)
     let rest' = skip rest
     case T.uncons rest' of
         Just (',', more) -> do
-            (vs, final) <- pArrElems (skip more)
+            (vs, final) <- pArrElemsD depth (skip more)
             Right (v : vs, final)
         Just (']', more) -> Right ([v], more)
         _ -> Left "Expected ',' or ']' in array"
@@ -206,6 +228,9 @@ decodeModule jv = do
     exports <- case optField "exports" fs of
         Just v -> asArr v >>= mapM asStr
         Nothing -> Right []
+    imports <- case optField "imports" fs of
+        Just v -> asArr v >>= mapM decodeQName
+        Nothing -> Right []
     defs <- field "definitions" fs >>= asArr >>= mapM decodeDef
     dts <- case optField "data_types" fs of
         Just v -> asArr v >>= mapM decodeDataType
@@ -213,7 +238,7 @@ decodeModule jv = do
     eds <- case optField "effect_decls" fs of
         Just v -> asArr v >>= mapM decodeEffectDecl
         Nothing -> Right []
-    Right (Module nm exports defs dts eds)
+    Right (Module nm exports imports defs dts eds)
 
 decodeDef :: D Definition
 decodeDef jv = do

@@ -74,10 +74,11 @@ checkModule path jv = case jv of
         requiredFields path ["name", "definitions"] fs
             <> checkStr path "name" fs
             <> checkOptStrArray path "exports" fs
+            <> checkOptQNameArray path "imports" fs
             <> checkDefinitions (path <> ".definitions") (lookup "definitions" fs)
             <> checkOptArray path "data_types" (checkDataType . arrElem path "data_types") fs
             <> checkOptArray path "effect_decls" (checkEffectDecl . arrElem path "effect_decls") fs
-            <> extraFields path ["name", "exports", "definitions", "data_types", "effect_decls"] fs
+            <> extraFields path ["name", "exports", "imports", "definitions", "data_types", "effect_decls"] fs
     _ -> [SchemaError path "module must be a JSON object"]
 
 checkDefinitions :: Text -> Maybe JVal -> [SchemaError]
@@ -510,6 +511,13 @@ checkOptStrArray path key fs = case lookup key fs of
   where
     isStr (JStr _) = True
     isStr _ = False
+
+checkOptQNameArray :: Text -> Text -> [(Text, JVal)] -> [SchemaError]
+checkOptQNameArray path key fs = case lookup key fs of
+    Just (JArr xs) ->
+        concatMap (\(i, x) -> checkQName (arrElem' (path <> "." <> key) i) (Just x)) (zip [0 ..] xs)
+    Just _ -> [SchemaError (path <> "." <> key) (quote key <> " must be a JSON array")]
+    Nothing -> []
 
 checkEnum :: Text -> Text -> [Text] -> [(Text, JVal)] -> [SchemaError]
 checkEnum path key valid fs = case lookup key fs of

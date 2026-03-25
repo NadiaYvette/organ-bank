@@ -75,7 +75,8 @@ extractOrganIR inputPath = do
                         funs = parseCoreErlang content
                         defs = map coreFunToDef funs
                         exports = map (T.pack . cfName) funs
-                        ir = IR.organIRWithExports IR.LErlang shimVer (T.pack modName) inputPath exports defs
+                        imports = extractCoreErlangImports content
+                        ir = IR.organIRWithImports IR.LErlang shimVer (T.pack modName) inputPath exports imports defs
                     pure $ Right $ renderOrganIR ir
 
 tryReadFile :: FilePath -> IO (Maybe String)
@@ -99,6 +100,39 @@ coreFunToDef fun =
             , IR.defVisibility = IR.Public
             , IR.defArity = arity
             }
+
+{- | Extract external module references from Core Erlang text.
+Core Erlang inter-module calls look like: call 'module':'function'
+We scan for 'mod':'fun' patterns and collect unique module:function QNames.
+-}
+extractCoreErlangImports :: String -> [IR.QName]
+extractCoreErlangImports content =
+    let ls = lines content
+        -- Look for patterns like 'erlang':'+'  or 'io':'format'
+        calls = concatMap extractCallsFromLine ls
+     in nubQNames calls
+  where
+    extractCallsFromLine line =
+        case findCallPattern (dropWhile isSpace line) of
+            [] -> []
+            xs -> xs
+
+    findCallPattern [] = []
+    findCallPattern ('\'':rest) =
+        case break (== '\'') rest of
+            (modName, '\'':':':'\'':afterColon) ->
+                case break (== '\'') afterColon of
+                    (funName, '\'':remaining) ->
+                        IR.QName (T.pack modName) (IR.Name (T.pack funName) 0)
+                            : findCallPattern remaining
+                    _ -> findCallPattern afterColon
+            (_, remaining) -> findCallPattern remaining
+    findCallPattern (_:rest) = findCallPattern rest
+
+    nubQNames [] = []
+    nubQNames (x:xs) = x : nubQNames (filter (\y -> not (qnEq x y)) xs)
+
+    qnEq (IR.QName m1 (IR.Name n1 _)) (IR.QName m2 (IR.Name n2 _)) = m1 == m2 && n1 == n2
 
 {- | Parse Core Erlang text to extract function definitions.
 

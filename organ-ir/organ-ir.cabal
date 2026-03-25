@@ -30,8 +30,10 @@ library
     OrganIR.Schema
     OrganIR.Validate
     OrganIR.Pretty
+    OrganIR.Transform
   build-depends:
     base >= 4.20 && < 5,
+    containers,
     text
   ghc-options: -Wall
 
@@ -71,12 +73,62 @@ test-suite roundtrip
     organ-ir
   ghc-options: -Wall
 
+benchmark bench
+  type: exitcode-stdio-1.0
+  default-language: GHC2024
+  default-extensions: OverloadedStrings
+  hs-source-dirs: bench
+  main-is: Bench.hs
+  build-depends:
+    base >= 4.20 && < 5,
+    text,
+    organ-ir,
+    tasty-bench
+  ghc-options: -Wall -O2
+
 test-suite integration
   type: exitcode-stdio-1.0
   default-language: GHC2024
   default-extensions: OverloadedStrings
   hs-source-dirs: test
   main-is: Integration.hs
+  build-depends:
+    base >= 4.20 && < 5,
+    text,
+    organ-ir
+  ghc-options: -Wall
+
+test-suite transform
+  type: exitcode-stdio-1.0
+  default-language: GHC2024
+  default-extensions: OverloadedStrings
+  hs-source-dirs: test
+  main-is: Transform.hs
+  build-depends:
+    base >= 4.20 && < 5,
+    text,
+    organ-ir
+  ghc-options: -Wall
+
+test-suite fuzz-parse
+  type: exitcode-stdio-1.0
+  default-language: GHC2024
+  default-extensions: OverloadedStrings
+  hs-source-dirs: test
+  main-is: FuzzParse.hs
+  build-depends:
+    base >= 4.20 && < 5,
+    text,
+    organ-ir,
+    QuickCheck
+  ghc-options: -Wall
+
+test-suite large-file
+  type: exitcode-stdio-1.0
+  default-language: GHC2024
+  default-extensions: OverloadedStrings
+  hs-source-dirs: test
+  main-is: LargeFile.hs
   build-depends:
     base >= 4.20 && < 5,
     text,
