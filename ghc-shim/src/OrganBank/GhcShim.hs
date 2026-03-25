@@ -10,22 +10,20 @@ module OrganBank.GhcShim
   ) where
 
 import Data.Text (Text)
-import qualified Data.Text as T
-import System.Process (readProcess)
-
+import Data.Text qualified as T
 import GHC
+import GHC.Core (CoreBind, CoreProgram, Bind (..))
 import GHC.Driver.Session (updOptLevel)
-import GHC.Core (CoreProgram, CoreBind(..), CoreExpr, Bind(..))
-import GHC.Core.Opt.Monad (CoreToDo(..))
-import GHC.Types.Var (Var, varName, isId, isTyVar)
-import GHC.Types.Name (getOccString, nameUnique)
+import GHC.Types.Name (getOccString)
+import GHC.Types.Name qualified as GN
 import GHC.Types.Unique (getKey)
-import GHC.Types.Literal
-import GHC.Core.DataCon (dataConName)
-import GHC.Core.TyCon (tyConName)
+import GHC.Types.Var (Var, varName)
 import GHC.Unit.Module (moduleName, moduleNameString)
-import GHC.HsToCore.Monad (DsM)
-import GHC.Types.Demand (isStrictDmd, isAbsDmd)
+import GHC.Unit.Module.ModGuts (mg_binds)
+import OrganIR.Build qualified as IR
+import OrganIR.Json (renderOrganIR)
+import OrganIR.Types qualified as IR
+import System.Process (readProcess)
 
 -- | Extract GHC Core from a Haskell source file and emit OrganIR JSON.
 extractOrganIR :: FilePath -> IO (Either Text Text)
@@ -49,57 +47,33 @@ extractOrganIR inputPath = do
         let modGuts  = dm_core_module desugared
             coreProg = mg_binds modGuts
             modName  = moduleNameString (moduleName (ms_mod ms))
-        pure $ Right $ emitOrganIR modName coreProg
+        pure $ Right $ emitOrganIR modName inputPath coreProg
 
 detectLibDir :: IO FilePath
 detectLibDir = do
   raw <- readProcess "ghc" ["--print-libdir"] ""
   pure $ reverse $ dropWhile (== '\n') $ reverse raw
 
--- | Emit a CoreProgram as OrganIR JSON.
--- This is a simplified emitter; a full implementation would traverse
--- all GHC Core constructors.
-emitOrganIR :: String -> CoreProgram -> Text
-emitOrganIR modName binds =
-  T.unlines
-    [ "{"
-    , "  \"schema_version\": \"1.0.0\","
-    , "  \"metadata\": {"
-    , "    \"source_language\": \"haskell\","
-    , "    \"compiler_version\": \"ghc-9.14.1\","
-    , "    \"shim_version\": \"0.1.0\""
-    , "  },"
-    , "  \"module\": {"
-    , "    \"name\": " <> jsonStr (T.pack modName) <> ","
-    , "    \"definitions\": [" <> T.intercalate ",\n" (map emitBind binds) <> "],"
-    , "    \"data_types\": [],"
-    , "    \"effect_decls\": []"
-    , "  }"
-    , "}"
-    ]
+-- | Emit a CoreProgram as OrganIR JSON using the organ-ir library.
+emitOrganIR :: String -> FilePath -> CoreProgram -> Text
+emitOrganIR modName srcFile binds =
+    renderOrganIR $
+        IR.simpleOrganIR IR.LHaskell "ghc-shim-0.1" (T.pack modName) srcFile $
+            concatMap bindToDefs binds
 
-emitBind :: CoreBind -> Text
-emitBind (NonRec v e) = emitDef v e
-emitBind (Rec pairs) = T.intercalate ",\n" [emitDef v e | (v, e) <- pairs]
+bindToDefs :: CoreBind -> [IR.Definition]
+bindToDefs (NonRec v _e) = [varToDef v]
+bindToDefs (Rec pairs) = [varToDef v | (v, _e) <- pairs]
 
-emitDef :: Var -> CoreExpr -> Text
-emitDef v _e =
-  let name = T.pack (getOccString (varName v))
-      uniq = getKey (nameUnique (varName v))
-  in T.unlines
-    [ "      {"
-    , "        \"name\": {\"module\": \"\", \"name\": {\"text\": " <> jsonStr name <> ", \"unique\": " <> T.pack (show uniq) <> "}},"
-    , "        \"type\": {\"con\": {\"qname\": {\"module\": \"std\", \"name\": {\"text\": \"any\"}}}},"
-    , "        \"expr\": {\"elit\": {\"int\": 0}},"
-    , "        \"sort\": \"fun\","
-    , "        \"visibility\": \"public\""
-    , "      }"
-    ]
-
-jsonStr :: Text -> Text
-jsonStr s = "\"" <> T.concatMap escapeChar s <> "\""
-  where
-    escapeChar '"'  = "\\\""
-    escapeChar '\\' = "\\\\"
-    escapeChar '\n' = "\\n"
-    escapeChar c    = T.singleton c
+varToDef :: Var -> IR.Definition
+varToDef v =
+    let name = T.pack (getOccString (varName v))
+        uniq = getKey (GN.nameUnique (varName v))
+    in IR.Definition
+        { IR.defName = IR.QName "" (IR.Name name (fromIntegral uniq))
+        , IR.defType = IR.TAny
+        , IR.defExpr = IR.ELit (IR.LitInt 0) -- placeholder until full Core translation
+        , IR.defSort = IR.SFun
+        , IR.defVisibility = IR.Public
+        , IR.defArity = 0
+        }

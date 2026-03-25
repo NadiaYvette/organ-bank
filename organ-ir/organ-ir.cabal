@@ -19,6 +19,8 @@ library
     OrganIR.Build
     OrganIR.Json
     OrganIR.Parse
+    OrganIR.Validate
+    OrganIR.Pretty
   build-depends:
     base >= 4.20 && < 5,
     text

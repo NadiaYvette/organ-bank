@@ -1,0 +1,8 @@
+-- Separate project file for ghc-shim, which requires GHC 9.14.*
+-- Usage: cabal --project-file=cabal-ghc914.project build ghc-shim
+
+packages:
+  organ-ir/
+  ghc-shim/
+
+with-compiler: /home/nyc/.ghcup/ghc/9.14.1/bin/ghc
