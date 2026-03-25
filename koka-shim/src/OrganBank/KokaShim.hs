@@ -22,6 +22,7 @@ data OrganDef = OrganDef
     , odParams :: [(Text, Text)] -- (name, mapped type)
     , odEffects :: [Text]
     , odReturnType :: Text
+    , odBody :: Text -- raw body text after " = "
     }
     deriving (Show)
 
@@ -135,9 +136,9 @@ parseFunSig t = do
         then Nothing
         else do
             let sig = T.strip (T.drop 3 afterColon) -- drop " : "
-            -- Cut at " = " to get just the type signature
-                (sigPart, _) = breakAtTopLevel sig
-            parseSigToOrgan name sigPart
+            -- Cut at " = " to get just the type signature and body
+                (sigPart, bodyPart) = breakAtTopLevel sig
+            parseSigToOrgan name sigPart bodyPart
 
 -- | Break at the first top-level " = " (not inside parens/angle brackets).
 breakAtTopLevel :: Text -> (Text, Text)
@@ -160,8 +161,8 @@ breakAtTopLevel = go (0 :: Int) (0 :: Int) T.empty
              in go parens' angles' (T.snoc acc c) (T.tail rest)
 
 -- | Parse a Koka Core type signature into params, effects, return type.
-parseSigToOrgan :: Text -> Text -> Maybe OrganDef
-parseSigToOrgan name sig
+parseSigToOrgan :: Text -> Text -> Text -> Maybe OrganDef
+parseSigToOrgan name sig bodyRaw
     -- Function type: (params) -> eff result
     | "(" `T.isPrefixOf` sig =
         let (paramsPart, afterParams) = matchParens sig
@@ -175,6 +176,7 @@ parseSigToOrgan name sig
                                 , odParams = params
                                 , odEffects = eff
                                 , odReturnType = mapType retTy
+                                , odBody = bodyRaw
                                 }
                 Nothing ->
                     -- No arrow — treat whole sig as return type (thunk)
@@ -184,6 +186,7 @@ parseSigToOrgan name sig
                             , odParams = params
                             , odEffects = []
                             , odReturnType = mapType (T.strip afterParams)
+                            , odBody = bodyRaw
                             }
     -- Value type (no parens): just a type
     | otherwise =
@@ -193,6 +196,7 @@ parseSigToOrgan name sig
                 , odParams = []
                 , odEffects = []
                 , odReturnType = mapType (T.strip sig)
+                , odBody = bodyRaw
                 }
 
 -- | Match balanced parens, return (inside, rest-after-close-paren).
@@ -339,6 +343,382 @@ mapType t = case T.strip t of
     _other -> "any"
 
 ------------------------------------------------------------------------
+-- Koka Core expression parser
+------------------------------------------------------------------------
+
+-- | Parse a Koka Core expression, with graceful fallback.
+parseKokaExpr :: Text -> IR.Expr
+parseKokaExpr raw
+    | T.null stripped = IR.eVar "_"
+    -- fn(params){ body }
+    | Just rest <- T.stripPrefix "fn(" stripped =
+        parseFnExpr rest
+    -- match(scrut) { branches }
+    | Just rest <- T.stripPrefix "match(" stripped =
+        parseMatchExpr rest
+    -- val x = e; rest  or  val x = e\nrest
+    | Just rest <- T.stripPrefix "val " stripped =
+        parseValExpr rest
+    -- if cond then t else e
+    | Just rest <- T.stripPrefix "if " stripped =
+        parseIfExpr rest
+    -- return(e) → just the inner expression
+    | Just rest <- T.stripPrefix "return(" stripped =
+        let (inner, _) = matchParens ("(" <> rest)
+         in parseKokaExpr inner
+    -- String literal
+    | "\"" `T.isPrefixOf` stripped =
+        case T.stripPrefix "\"" stripped of
+            Just afterQuote ->
+                let (content, _) = T.breakOn "\"" afterQuote
+                 in IR.ELit (IR.LitString content)
+            Nothing -> fallbackExpr stripped
+    -- Integer/float literal
+    | isNumericStart stripped =
+        parseLiteral stripped
+    -- Function application: f(args)
+    | Just (fName, argsText) <- parseFunCall stripped =
+        let args = splitArgs argsText
+         in IR.EApp (IR.eVar fName) (map parseKokaExpr args)
+    -- Binary operation: try to split on top-level operators
+    | Just (lhs, op, rhs) <- parseBinOp stripped =
+        IR.EApp (IR.eVar op) [parseKokaExpr lhs, parseKokaExpr rhs]
+    -- Bare identifier (variable)
+    | isIdentifier stripped =
+        IR.eVar stripped
+    -- Fallback: wrap as opaque Koka Core text
+    | otherwise = fallbackExpr stripped
+  where
+    stripped = T.strip raw
+
+-- | Fallback: wrap unparsed text as application of "koka-core" to the raw text.
+fallbackExpr :: Text -> IR.Expr
+fallbackExpr t = IR.eApp (IR.eVar "koka-core") [IR.eString t]
+
+-- | Parse fn(params){ body }
+parseFnExpr :: Text -> IR.Expr
+parseFnExpr rest =
+    let -- rest starts after "fn(", so re-add "(" for matchParens
+        (paramText, afterParams) = matchParens ("(" <> rest)
+        params = parseLamParams paramText
+        bodyText = extractBraceBody (T.strip afterParams)
+     in IR.ELam params (parseKokaExpr bodyText)
+
+-- | Parse lambda parameters: "x: int, y: string" → [LamParam]
+parseLamParams :: Text -> [IR.LamParam]
+parseLamParams t
+    | T.null (T.strip t) = []
+    | otherwise = map parseOneLamParam (splitParams t)
+
+parseOneLamParam :: Text -> IR.LamParam
+parseOneLamParam t =
+    let stripped = T.strip t
+     in case T.breakOn ":" stripped of
+            (n, rest)
+                | not (T.null rest) ->
+                    let ty = T.strip (T.drop 1 rest)
+                     in IR.LamParam (IR.Name (T.strip n) 0) (Just (IR.tCon (mapType ty)))
+                | otherwise ->
+                    IR.LamParam (IR.Name stripped 0) Nothing
+
+-- | Parse match(scrut) { pat -> body; ... }
+parseMatchExpr :: Text -> IR.Expr
+parseMatchExpr rest =
+    let (scrutText, afterScrut) = matchParens ("(" <> rest)
+        scrut = parseKokaExpr scrutText
+        branchText = extractBraceBody (T.strip afterScrut)
+        branches = parseBranches branchText
+     in IR.ECase scrut branches
+
+-- | Parse branches from inside { ... }, separated by newlines or semicolons.
+parseBranches :: Text -> [IR.Branch]
+parseBranches t =
+    let rawBranches = splitBranches t
+     in mapMaybe parseOneBranch rawBranches
+  where
+    mapMaybe _ [] = []
+    mapMaybe f (x : xs) = case f x of
+        Just b -> b : mapMaybe f xs
+        Nothing -> mapMaybe f xs
+
+-- | Split branch text on top-level newlines or semicolons containing "->".
+splitBranches :: Text -> [Text]
+splitBranches t =
+    let -- First try splitting on newlines
+        lns = map T.strip (T.lines t)
+        -- Filter out empty lines
+        nonEmpty = filter (not . T.null) lns
+     in if any ("->" `T.isInfixOf`) nonEmpty
+            then nonEmpty
+            else -- Try semicolons
+                map T.strip (splitTopLevel ';' t)
+
+-- | Parse a single branch: "Pat -> body"
+parseOneBranch :: Text -> Maybe IR.Branch
+parseOneBranch t =
+    let (patText, bodyText) = breakAtArrow t
+     in if T.null bodyText
+            then Nothing
+            else
+                Just
+                    IR.Branch
+                        { IR.brPattern = parsePattern (T.strip patText)
+                        , IR.brBody = parseKokaExpr (T.strip bodyText)
+                        }
+
+-- | Break at top-level " -> " (not inside parens/braces).
+breakAtArrow :: Text -> (Text, Text)
+breakAtArrow = go (0 :: Int) T.empty
+  where
+    go !depth acc rest
+        | T.null rest = (acc, T.empty)
+        | " -> " `T.isPrefixOf` rest && depth == 0 =
+            (acc, T.drop 4 rest)
+        | "->" `T.isPrefixOf` rest && depth == 0 && T.null acc =
+            -- Handle "->body" at start (unlikely but safe)
+            (acc, T.drop 2 rest)
+        | otherwise =
+            let c = T.head rest
+                depth' = case c of
+                    '(' -> depth + 1
+                    ')' -> max 0 (depth - 1)
+                    '{' -> depth + 1
+                    '}' -> max 0 (depth - 1)
+                    _ -> depth
+             in go depth' (T.snoc acc c) (T.tail rest)
+
+-- | Parse a pattern: constructor, literal, variable, or wildcard.
+parsePattern :: Text -> IR.Pat
+parsePattern t
+    | T.null t = IR.PatWild
+    | t == "_" = IR.PatWild
+    | t == "True" || t == "true" = IR.PatCon (IR.localName "true") []
+    | t == "False" || t == "false" = IR.PatCon (IR.localName "false") []
+    -- Constructor with args: Con(x, y)
+    | Just (cName, argsText) <- parseFunCall t =
+        let binders = map (\a -> IR.PatBinder (IR.Name (T.strip a) 0) Nothing)
+                          (splitArgs argsText)
+         in IR.PatCon (IR.localName cName) binders
+    -- Integer literal pattern
+    | isNumericStart t =
+        case parseLiteral t of
+            IR.ELit lit -> IR.PatLit lit
+            _ -> IR.PatVar (IR.Name t 0) Nothing
+    -- String literal pattern
+    | "\"" `T.isPrefixOf` t =
+        case T.stripPrefix "\"" t of
+            Just afterQuote ->
+                let (content, _) = T.breakOn "\"" afterQuote
+                 in IR.PatLit (IR.LitString content)
+            Nothing -> IR.PatVar (IR.Name t 0) Nothing
+    -- Variable pattern
+    | isIdentifier t = IR.PatVar (IR.Name t 0) Nothing
+    -- Fallback
+    | otherwise = IR.PatVar (IR.Name t 0) Nothing
+
+-- | Parse "val x = e; rest" or "val x = e\nrest"
+parseValExpr :: Text -> IR.Expr
+parseValExpr rest =
+    let (binding, after) = breakValBinding rest
+        (vName, valExpr) = parseValBinding binding
+     in if T.null (T.strip after)
+            then IR.ELet [IR.LetBind (IR.Name vName 0) Nothing (parseKokaExpr valExpr)]
+                         (IR.eVar vName)
+            else IR.ELet [IR.LetBind (IR.Name vName 0) Nothing (parseKokaExpr valExpr)]
+                         (parseKokaExpr after)
+
+-- | Split "x = expr; rest" or "x = expr\nrest" into (binding, rest).
+breakValBinding :: Text -> (Text, Text)
+breakValBinding t =
+    -- Look for semicolon or newline after the binding
+    let (beforeEq, afterEq) = breakAtTopLevel t
+     in case T.breakOn ";" afterEq of
+            (expr, rest)
+                | not (T.null rest) -> (beforeEq <> " = " <> expr, T.drop 1 rest)
+                | otherwise ->
+                    -- Try newline split
+                    case T.breakOn "\n" afterEq of
+                        (expr', rest')
+                            | not (T.null rest') -> (beforeEq <> " = " <> expr', T.drop 1 rest')
+                            | otherwise -> (t, T.empty)
+
+-- | Parse "x = expr" or "x : type = expr" into (name, exprText).
+parseValBinding :: Text -> (Text, Text)
+parseValBinding t =
+    let (lhs, rhs) = breakAtTopLevel t
+     in case T.breakOn " : " lhs of
+            (n, _rest)
+                | not (T.null _rest) -> (T.strip n, rhs)
+                | otherwise -> (T.strip lhs, rhs)
+
+-- | Parse "if cond then t else e"
+parseIfExpr :: Text -> IR.Expr
+parseIfExpr rest =
+    case breakAtKeyword "then" rest of
+        Just (condText, afterThen) ->
+            case breakAtKeyword "else" afterThen of
+                Just (thenText, elseText) ->
+                    IR.ECase
+                        (parseKokaExpr condText)
+                        [ IR.Branch (IR.PatCon (IR.localName "true") []) (parseKokaExpr thenText)
+                        , IR.Branch (IR.PatCon (IR.localName "false") []) (parseKokaExpr elseText)
+                        ]
+                Nothing ->
+                    -- No else branch
+                    IR.ECase
+                        (parseKokaExpr condText)
+                        [ IR.Branch (IR.PatCon (IR.localName "true") []) (parseKokaExpr afterThen)
+                        , IR.Branch (IR.PatCon (IR.localName "false") []) (IR.eVar "_")
+                        ]
+        Nothing -> fallbackExpr ("if " <> rest)
+
+-- | Break at a top-level keyword (surrounded by spaces, not inside nesting).
+breakAtKeyword :: Text -> Text -> Maybe (Text, Text)
+breakAtKeyword kw = go (0 :: Int) T.empty
+  where
+    kwPat = " " <> kw <> " "
+    kwLen = T.length kwPat
+    go !depth acc rest
+        | T.null rest = Nothing
+        | kwPat `T.isPrefixOf` rest && depth == 0 =
+            Just (acc, T.drop kwLen rest)
+        | otherwise =
+            let c = T.head rest
+                depth' = case c of
+                    '(' -> depth + 1
+                    ')' -> max 0 (depth - 1)
+                    '{' -> depth + 1
+                    '}' -> max 0 (depth - 1)
+                    _ -> depth
+             in go depth' (T.snoc acc c) (T.tail rest)
+
+-- | Extract body from { ... }, stripping outer braces.
+extractBraceBody :: Text -> Text
+extractBraceBody t
+    | Just inner <- T.stripPrefix "{" t =
+        -- Find matching close brace
+        let (body, _) = matchBraces inner
+         in T.strip body
+    | otherwise = t
+
+-- | Match balanced braces, return (inside, rest-after-close-brace).
+matchBraces :: Text -> (Text, Text)
+matchBraces = go (1 :: Int) T.empty
+  where
+    go 0 acc rest = (acc, rest)
+    go _ acc rest | T.null rest = (acc, T.empty)
+    go n acc rest =
+        let c = T.head rest
+            n' = case c of
+                '{' -> n + 1
+                '}' -> n - 1
+                _ -> n
+         in if n' == 0
+                then (acc, T.tail rest)
+                else go n' (T.snoc acc c) (T.tail rest)
+
+-- | Try to parse "f(args)" → Just (f, argsText).
+parseFunCall :: Text -> Maybe (Text, Text)
+parseFunCall t =
+    let (ident, rest) = T.span isIdentChar t
+     in if T.null ident || T.null rest
+            then Nothing
+            else case T.uncons rest of
+                Just ('(', _) ->
+                    let (args, _) = matchParens rest
+                     in Just (ident, args)
+                _ -> Nothing
+
+-- | Split arguments at top-level commas (reuses splitParams).
+splitArgs :: Text -> [Text]
+splitArgs = splitParams
+
+-- | Try to parse a binary operation: a op b.
+-- Checks for common operators at the top level.
+parseBinOp :: Text -> Maybe (Text, Text, Text)
+parseBinOp t = go operators
+  where
+    -- Ordered longest-first to avoid prefix conflicts
+    operators :: [Text]
+    operators = ["<=", ">=", "!=", "==", "&&", "||", "+", "-", "*", "/", "%", "<", ">"]
+    go [] = Nothing
+    go (op : ops) =
+        case breakAtOp op t of
+            Just (lhs, rhs)
+                | not (T.null (T.strip lhs)) && not (T.null (T.strip rhs)) ->
+                    Just (T.strip lhs, op, T.strip rhs)
+            _ -> go ops
+
+-- | Break at a top-level binary operator (space-surrounded, not inside nesting).
+breakAtOp :: Text -> Text -> Maybe (Text, Text)
+breakAtOp op = go (0 :: Int) T.empty
+  where
+    pat = " " <> op <> " "
+    patLen = T.length pat
+    go !depth acc rest
+        | T.null rest = Nothing
+        | pat `T.isPrefixOf` rest && depth == 0 =
+            Just (acc, T.drop patLen rest)
+        | otherwise =
+            let c = T.head rest
+                depth' = case c of
+                    '(' -> depth + 1
+                    ')' -> max 0 (depth - 1)
+                    '{' -> depth + 1
+                    '}' -> max 0 (depth - 1)
+                    _ -> depth
+             in go depth' (T.snoc acc c) (T.tail rest)
+
+-- | Check if text starts with a digit or negative sign followed by digit.
+isNumericStart :: Text -> Bool
+isNumericStart t = case T.uncons t of
+    Just (c, _) | c >= '0' && c <= '9' -> True
+    Just ('-', rest) -> case T.uncons rest of
+        Just (c, _) | c >= '0' && c <= '9' -> True
+        _ -> False
+    _ -> False
+
+-- | Parse an integer or float literal.
+parseLiteral :: Text -> IR.Expr
+parseLiteral t =
+    let numText = T.takeWhile (\c -> c >= '0' && c <= '9' || c == '.' || c == '-' || c == 'e' || c == 'E') t
+     in if "." `T.isInfixOf` numText || "e" `T.isInfixOf` numText || "E" `T.isInfixOf` numText
+            then case reads (T.unpack numText) :: [(Double, String)] of
+                [(d, "")] -> IR.ELit (IR.LitFloat d)
+                _ -> fallbackExpr t
+            else case reads (T.unpack numText) :: [(Integer, String)] of
+                [(n, "")] -> IR.ELit (IR.LitInt n)
+                _ -> fallbackExpr t
+
+-- | Is the character valid in an identifier?
+isIdentChar :: Char -> Bool
+isIdentChar c = c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
+    || c >= '0' && c <= '9' || c == '_' || c == '-' || c == '/' || c == '.'
+
+-- | Is the text a valid identifier (non-empty, starts with letter or _)?
+isIdentifier :: Text -> Bool
+isIdentifier t = case T.uncons t of
+    Just (c, rest) -> (c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c == '_')
+        && T.all isIdentChar rest
+    Nothing -> False
+
+-- | Split text at top-level occurrences of a separator character.
+splitTopLevel :: Char -> Text -> [Text]
+splitTopLevel sep = go (0 :: Int) T.empty
+  where
+    go _ acc rest | T.null rest = [acc | not (T.null (T.strip acc))]
+    go !depth acc rest =
+        let c = T.head rest
+            rest' = T.tail rest
+         in case c of
+                _ | c == sep && depth == 0 -> acc : go 0 T.empty rest'
+                '(' -> go (depth + 1) (T.snoc acc c) rest'
+                ')' -> go (max 0 (depth - 1)) (T.snoc acc c) rest'
+                '{' -> go (depth + 1) (T.snoc acc c) rest'
+                '}' -> go (max 0 (depth - 1)) (T.snoc acc c) rest'
+                _ -> go depth (T.snoc acc c) rest'
+
+------------------------------------------------------------------------
 -- OrganIR conversion
 ------------------------------------------------------------------------
 
@@ -356,7 +736,7 @@ defToIR d =
     IR.Definition
         { IR.defName = IR.localName (odName d)
         , IR.defType = defType_
-        , IR.defExpr = IR.EVar (IR.Name (odName d) 0)
+        , IR.defExpr = parseKokaExpr (odBody d)
         , IR.defSort = if null (odParams d) then IR.SVal else IR.SFun
         , IR.defVisibility = IR.Public
         , IR.defArity = length (odParams d)

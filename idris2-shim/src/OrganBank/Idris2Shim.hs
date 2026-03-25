@@ -14,10 +14,11 @@ We parse this into definitions with case-tree bodies.
 -}
 module OrganBank.Idris2Shim (
     extractOrganIR,
+    parseCaseTree,
 ) where
 
 import Control.Exception (SomeException, catch)
-import Data.Char (isAlphaNum, isSpace)
+import Data.Char (isAlphaNum, isDigit, isSpace)
 import Data.List (isPrefixOf)
 import Data.Text (Text)
 import Data.Text qualified as T
@@ -131,12 +132,9 @@ defToIR uid def' =
             | otherwise = IR.TFn (replicate arity (IR.FnArg (Just IR.Many) IR.TAny)) IR.pureEffect IR.TAny
         bodyText = T.pack (idris2DefBodyText def')
         bodyExpr
-            | idris2DefHasCase def' =
-                IR.EApp (IR.eVar "case_tree") [IR.eString bodyText]
             | T.null (T.strip bodyText) =
                 IR.EApp (IR.eVar "case_tree") [IR.eString "<empty>"]
-            | otherwise =
-                IR.EApp (IR.eVar "case_tree") [IR.eString bodyText]
+            | otherwise = parseCaseTree bodyText
      in IR.Definition
             { IR.defName = qname
             , IR.defType = ty
@@ -150,3 +148,315 @@ defToIR uid def' =
 emitOrganIR :: Text -> String -> [Idris2Def] -> Text
 emitOrganIR shimVer modName defs =
     renderOrganIR $ IR.organIR IR.LIdris2 shimVer (T.pack modName) (zipWith defToIR [1 ..] defs)
+
+-- ---------------------------------------------------------------------------
+-- Idris 2 case tree parser
+-- ---------------------------------------------------------------------------
+
+-- | Parse an Idris 2 case tree expression into OrganIR Expr.
+-- Best-effort: falls back to @eApp (eVar "case-tree") [eString text]@.
+parseCaseTree :: Text -> IR.Expr
+parseCaseTree txt =
+    let stripped = T.strip txt
+     in case parseExpr (T.unpack stripped) of
+            Just (expr, _) -> expr
+            Nothing -> caseFallback stripped
+
+-- | Fallback: wrap unparsed text.
+caseFallback :: Text -> IR.Expr
+caseFallback t = IR.EApp (IR.eVar "case-tree") [IR.eString t]
+
+-- | Try to parse a single expression, returning the expression and remaining input.
+parseExpr :: String -> Maybe (IR.Expr, String)
+parseExpr s =
+    let s' = dropWhile isSpace s
+     in case s' of
+            -- Lambda: \{arg:N} => body
+            ('\\' : rest) ->
+                case parseLambda ('\\' : rest) of
+                    Just r -> Just r
+                    Nothing -> parseSExprOrAtom s'
+            -- Parenthesized s-expression: (f a b)
+            ('(' : _) -> parseSExprOrAtom s'
+            -- case VAR of { ... }
+            _ | "case " `isPrefixOf` s' -> parseCase s'
+            -- Otherwise: atom (literal, variable, identifier)
+            _ -> parseSExprOrAtom s'
+
+-- | Parse lambda chains: \{arg:0} => \{arg:1} => body
+parseLambda :: String -> Maybe (IR.Expr, String)
+parseLambda s = do
+    let s' = dropWhile isSpace s
+    -- Expect \{arg:N} =>
+    rest0 <- stripPrefix' "\\" s'
+    let (param, rest1) = parseVarOrIdent rest0
+    rest2 <- stripPrefixWs "=>" rest1
+    (body, rest3) <- parseExpr rest2
+    let paramName = T.pack param
+    pure (IR.ELam [IR.LamParam (IR.Name paramName 0) Nothing] body, rest3)
+
+-- | Parse: case VAR of { ALT ; ALT ; ... }
+parseCase :: String -> Maybe (IR.Expr, String)
+parseCase s = do
+    rest0 <- stripPrefix' "case " s
+    let (scrut, rest1) = parseVarOrIdent rest0
+    rest2 <- stripPrefixWs "of" rest1
+    let rest2' = dropWhile isSpace rest2
+    -- Handle both { ... } delimited and indented forms
+    case rest2' of
+        ('{' : rest3) -> do
+            let alts = parseBracedAlts rest3
+            let scrutExpr = textToVar (T.pack scrut)
+            pure (IR.ECase scrutExpr alts, "")
+        _ -> do
+            -- Indented alts (no braces) - parse to end
+            let alts = parseIndentedAlts rest2'
+            let scrutExpr = textToVar (T.pack scrut)
+            pure (IR.ECase scrutExpr alts, "")
+
+-- | Parse alts inside { ... }, separated by ;
+parseBracedAlts :: String -> [IR.Branch]
+parseBracedAlts s =
+    let s' = dropWhile isSpace s
+     in case s' of
+            ('}' : _) -> []
+            _ ->
+                let (altText, rest) = splitAlt s'
+                    b = parseAlt altText
+                    rest' = dropWhile isSpace rest
+                 in case rest' of
+                        (';' : rest'') -> b : parseBracedAlts rest''
+                        ('}' : _) -> [b]
+                        _ -> [b] -- end of input
+
+-- | Split out one alt from braced form, respecting parens/braces nesting.
+splitAlt :: String -> (String, String)
+splitAlt = go 0 []
+  where
+    go :: Int -> String -> String -> (String, String)
+    go _ acc [] = (reverse acc, [])
+    go 0 acc (';' : rest) = (reverse acc, ';' : rest)
+    go 0 acc ('}' : rest) = (reverse acc, '}' : rest)
+    go n acc ('(' : rest) = go (n + 1) ('(' : acc) rest
+    go n acc (')' : rest) = go (max 0 (n - 1)) (')' : acc) rest
+    go n acc ('{' : rest) = go (n + 1) ('{' : acc) rest
+    go n acc (c : rest) = go n (c : acc) rest
+
+-- | Parse indented alternatives (no brace delimiters).
+parseIndentedAlts :: String -> [IR.Branch]
+parseIndentedAlts s =
+    let ls = lines s
+        altLines = filter (not . null . dropWhile isSpace) ls
+     in map (parseAlt . dropWhile isSpace) altLines
+
+-- | Parse a single alternative: pattern => body
+parseAlt :: String -> IR.Branch
+parseAlt s =
+    let s' = dropWhile isSpace s
+     in case breakOnArrow s' of
+            Just (patStr, bodyStr) ->
+                let pat = parsePat (trim' patStr)
+                    body = case parseExpr bodyStr of
+                        Just (e, _) -> e
+                        Nothing -> caseFallback (T.pack bodyStr)
+                 in IR.Branch pat body
+            Nothing -> IR.Branch IR.PatWild (caseFallback (T.pack s'))
+
+-- | Break on " => " that is not inside parens.
+breakOnArrow :: String -> Maybe (String, String)
+breakOnArrow = go 0 []
+  where
+    go :: Int -> String -> String -> Maybe (String, String)
+    go _ _ [] = Nothing
+    go 0 acc (' ' : '=' : '>' : ' ' : rest) = Just (reverse acc, rest)
+    go n acc ('(' : rest) = go (n + 1) ('(' : acc) rest
+    go n acc (')' : rest) = go (max 0 (n - 1)) (')' : acc) rest
+    go n acc (c : rest) = go n (c : acc) rest
+
+-- | Parse a pattern.
+parsePat :: String -> IR.Pat
+parsePat "_" = IR.PatWild
+parsePat s
+    | all isDigit s, not (null s) = IR.PatLit (IR.LitInt (read s))
+    | Just s' <- stripPrefix' "-" s, all isDigit s', not (null s') =
+        IR.PatLit (IR.LitInt (negate (read s')))
+    | Just inner <- stripQuotes s = IR.PatLit (IR.LitString (T.pack inner))
+    | '(' : rest <- s =
+        -- Constructor with args in parens
+        let tokens = tokenizeSExpr rest
+         in case tokens of
+                (con : args) -> IR.PatCon (IR.localName (T.pack con))
+                    (map (\a -> IR.PatBinder (IR.Name (T.pack a) 0) Nothing) args)
+                [] -> IR.PatWild
+    | otherwise =
+        -- Plain constructor or variable
+        let (con, rest) = break isSpace s
+            args = words rest
+         in if null args
+                then
+                    -- Could be constructor with no args or variable
+                    case con of
+                        (c : _) | any (== '.') con || isUpper' c ->
+                            IR.PatCon (parseQName con) []
+                        _ -> IR.PatVar (IR.Name (T.pack con) 0) Nothing
+                else IR.PatCon (parseQName con)
+                    (map (\a -> IR.PatBinder (IR.Name (T.pack a) 0) Nothing) args)
+  where
+    isUpper' c = c >= 'A' && c <= 'Z'
+
+-- | Strip surrounding quotes from a string literal.
+stripQuotes :: String -> Maybe String
+stripQuotes ('"' : rest) = case reverse rest of
+    ('"' : inner) -> Just (reverse inner)
+    _ -> Nothing
+stripQuotes _ = Nothing
+
+-- | Parse an s-expression (f a b) or a single atom.
+parseSExprOrAtom :: String -> Maybe (IR.Expr, String)
+parseSExprOrAtom s =
+    let s' = dropWhile isSpace s
+     in case s' of
+            ('(' : rest) -> parseSExpr rest
+            _ -> parseAtom s'
+
+-- | Parse s-expression contents after opening paren.
+parseSExpr :: String -> Maybe (IR.Expr, String)
+parseSExpr s =
+    let tokens = tokenizeSExpr s
+     in case tokens of
+            [] -> Nothing
+            [single] ->
+                let e = textToAtom (T.pack single)
+                    rest = dropAfterSExpr s
+                 in Just (e, rest)
+            (f : args) ->
+                let fExpr = textToAtom (T.pack f)
+                    argExprs = map (\a -> parseNestedArg a) args
+                    rest = dropAfterSExpr s
+                 in Just (IR.EApp fExpr argExprs, rest)
+
+-- | Parse a nested argument which could itself be an s-expression.
+parseNestedArg :: String -> IR.Expr
+parseNestedArg s
+    | ('(' : _) <- s = case parseExpr s of
+        Just (e, _) -> e
+        Nothing -> textToAtom (T.pack s)
+    | otherwise = textToAtom (T.pack s)
+
+-- | Tokenize s-expression contents (before closing paren), respecting nesting.
+tokenizeSExpr :: String -> [String]
+tokenizeSExpr = go 0 [] []
+  where
+    go :: Int -> String -> [String] -> String -> [String]
+    go _ cur acc [] = reverse (finishToken cur acc)
+    go 0 cur acc (')' : _) = reverse (finishToken cur acc)
+    go n cur acc ('(' : rest) = go (n + 1) ('(' : cur) acc rest
+    go n cur acc (')' : rest)
+        | n > 0 = go (n - 1) (')' : cur) acc rest
+        | otherwise = reverse (finishToken cur acc)
+    go 0 cur acc (' ' : rest) = go 0 [] (finishToken cur acc) rest
+    go n cur acc (' ' : rest)
+        | n > 0 = go n (' ' : cur) acc rest
+        | otherwise = go 0 [] (finishToken cur acc) rest
+    go n cur acc (c : rest) = go n (c : cur) acc rest
+    finishToken [] acc = acc
+    finishToken cur acc = reverse cur : acc
+
+-- | Drop input past the closing paren of an s-expression.
+dropAfterSExpr :: String -> String
+dropAfterSExpr = go (0 :: Int)
+  where
+    go _ [] = []
+    go 0 (')' : rest) = rest
+    go n ('(' : rest) = go (n + 1) rest
+    go n (')' : rest) = go (n - 1) rest
+    go n (_ : rest) = go n rest
+
+-- | Parse a single atom (variable, literal, or identifier).
+parseAtom :: String -> Maybe (IR.Expr, String)
+parseAtom s =
+    let s' = dropWhile isSpace s
+     in case s' of
+            [] -> Nothing
+            ('"' : _) ->
+                let (str, rest) = spanString s'
+                 in Just (IR.eString (T.pack str), rest)
+            _ ->
+                let (tok, rest) = spanToken s'
+                 in if null tok
+                        then Nothing
+                        else Just (textToAtom (T.pack tok), rest)
+
+-- | Span a quoted string, handling simple escapes.
+spanString :: String -> (String, String)
+spanString ('"' : rest) = go [] rest
+  where
+    go acc [] = (reverse acc, [])
+    go acc ('\\' : c : cs) = go (c : '\\' : acc) cs
+    go acc ('"' : cs) = (reverse acc, cs)
+    go acc (c : cs) = go (c : acc) cs
+spanString s = ([], s)
+
+-- | Span a token (non-space, non-paren delimited).
+spanToken :: String -> (String, String)
+spanToken = span (\c -> not (isSpace c) && c /= ')' && c /= '(' && c /= ';' && c /= '}')
+
+-- | Convert a text token to an atom expression.
+textToAtom :: Text -> IR.Expr
+textToAtom t
+    | Just n <- readInteger t = IR.eInt n
+    | t == "True" || t == "true" = IR.eBool True
+    | t == "False" || t == "false" = IR.eBool False
+    | otherwise = textToVar t
+
+-- | Convert text to a variable expression, handling {arg:N} and qualified names.
+textToVar :: Text -> IR.Expr
+textToVar t = IR.EVar (IR.Name t 0)
+
+-- | Try to read an integer from text.
+readInteger :: Text -> Maybe Integer
+readInteger t =
+    let s = T.unpack t
+     in case s of
+            ('-' : rest) | not (null rest), all isDigit rest -> Just (read s)
+            _ | not (null s), all isDigit s -> Just (read s)
+            _ -> Nothing
+
+-- | Parse a qualified name like "Main.factorial".
+parseQName :: String -> IR.QName
+parseQName s =
+    case breakOnLastDot s of
+        Just (modPart, namePart) -> IR.QName (T.pack modPart) (IR.Name (T.pack namePart) 0)
+        Nothing -> IR.localName (T.pack s)
+
+-- | Break on the last dot in a string.
+breakOnLastDot :: String -> Maybe (String, String)
+breakOnLastDot s =
+    case break (== '.') (reverse s) of
+        (_, []) -> Nothing
+        (rname, _ : rmod) -> Just (reverse rmod, reverse rname)
+
+-- | Parse a variable or identifier token (handling {arg:N} syntax).
+parseVarOrIdent :: String -> (String, String)
+parseVarOrIdent ('{' : rest) =
+    let (var, after) = break (== '}') rest
+     in case after of
+            ('}' : rest') -> ("{" ++ var ++ "}", rest')
+            _ -> ("{" ++ var, after)
+parseVarOrIdent s = spanToken s
+
+-- | Strip a prefix from a string, or Nothing.
+stripPrefix' :: String -> String -> Maybe String
+stripPrefix' [] s = Just s
+stripPrefix' _ [] = Nothing
+stripPrefix' (p : ps) (c : cs)
+    | p == c = stripPrefix' ps cs
+    | otherwise = Nothing
+
+-- | Strip a prefix after skipping leading whitespace.
+stripPrefixWs :: String -> String -> Maybe String
+stripPrefixWs prefix s = stripPrefix' prefix (dropWhile isSpace s)
+
+-- | Trim whitespace from both ends.
+trim' :: String -> String
+trim' = reverse . dropWhile isSpace . reverse . dropWhile isSpace

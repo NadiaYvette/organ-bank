@@ -1,0 +1,185 @@
+{
+  "schema_version": "1.0.0",
+  "metadata": {
+    "source_language": "agda",
+    "compiler_version": "agda-2.7.0",
+    "source_file": "Factorial.agda",
+    "shim_version": "example-1.0"
+  },
+  "module": {
+    "name": "Factorial",
+    "exports": [
+      "factorial"
+    ],
+    "definitions": [
+      {
+        "name": {
+          "module": "Factorial",
+          "name": {
+            "text": "factorial",
+            "unique": 1
+          }
+        },
+        "type": {
+          "fn": {
+            "args": [
+              {
+                "type": {
+                  "con": {
+                    "qname": {
+                      "module": "Agda.Builtin.Nat",
+                      "name": {
+                        "text": "Nat",
+                        "unique": 0
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "effect": {
+              "effects": []
+            },
+            "result": {
+              "con": {
+                "qname": {
+                  "module": "Agda.Builtin.Nat",
+                  "name": {
+                    "text": "Nat",
+                    "unique": 0
+                  }
+                }
+              }
+            }
+          }
+        },
+        "expr": {
+          "elam": {
+            "params": [
+              {
+                "name": {
+                  "text": "n",
+                  "unique": 2
+                },
+                "type": {
+                  "con": {
+                    "qname": {
+                      "module": "Agda.Builtin.Nat",
+                      "name": {
+                        "text": "Nat",
+                        "unique": 0
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "body": {
+              "ecase": {
+                "scrutinee": {
+                  "evar": {
+                    "text": "n",
+                    "unique": 2
+                  }
+                },
+                "branches": [
+                  {
+                    "pattern": {
+                      "pat_con": {
+                        "name": {
+                          "module": "Agda.Builtin.Nat",
+                          "name": {
+                            "text": "zero",
+                            "unique": 0
+                          }
+                        }
+                      }
+                    },
+                    "body": {
+                      "elit": {
+                        "int": 1
+                      }
+                    }
+                  },
+                  {
+                    "pattern": {
+                      "pat_con": {
+                        "name": {
+                          "module": "Agda.Builtin.Nat",
+                          "name": {
+                            "text": "suc",
+                            "unique": 0
+                          }
+                        },
+                        "args": [
+                          {
+                            "name": {
+                              "text": "m",
+                              "unique": 3
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    "body": {
+                      "eapp": {
+                        "fn": {
+                          "evar": {
+                            "text": "*",
+                            "unique": 0
+                          }
+                        },
+                        "args": [
+                          {
+                            "evar": {
+                              "text": "n",
+                              "unique": 2
+                            }
+                          },
+                          {
+                            "eapp": {
+                              "fn": {
+                                "evar": {
+                                  "text": "factorial",
+                                  "unique": 1
+                                }
+                              },
+                              "args": [
+                                {
+                                  "evar": {
+                                    "text": "m",
+                                    "unique": 3
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "pattern": {
+                      "pat_wild": {}
+                    },
+                    "body": {
+                      "evar": {
+                        "text": "_unreachable",
+                        "unique": 0
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "sort": "fun",
+        "visibility": "public",
+        "arity": 1
+      }
+    ],
+    "data_types": [],
+    "effect_decls": []
+  }
+}

@@ -60,3 +60,12 @@ jobs:
         env:
           CABAL: cabal
         run: bash test/integration-test.sh
+
+      - name: Generate Haddock documentation
+        run: cabal haddock organ-ir --haddock-html --haddock-hyperlink-source
+
+      - name: Upload Haddock docs
+        uses: actions/upload-artifact@v4
+        with:
+          name: haddock-docs
+          path: dist-newstyle/build/*/ghc-*/organ-ir-*/doc/html/organ-ir/

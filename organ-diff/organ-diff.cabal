@@ -1,0 +1,28 @@
+cabal-version: 3.0
+name:          organ-diff
+version:       0.1.0
+synopsis:      Structural diff tool for OrganIR JSON documents
+description:
+  Compares two OrganIR JSON files structurally, ignoring name unique
+  suffixes and metadata differences, and reports added, removed, and
+  changed definitions.
+license:       GPL-2.0-only
+license-file:  ../LICENSE
+author:        Nadia Yvette Chambers
+maintainer:    nadia@nadiayvette.com
+homepage:      https://github.com/NadiaYvette/organ-bank
+bug-reports:   https://github.com/NadiaYvette/organ-bank/issues
+category:      Compiler, Language
+tested-with:   GHC == 9.14.1, GHC == 9.15.20260305
+build-type:    Simple
+
+executable organ-diff
+  default-language: GHC2024
+  default-extensions: OverloadedStrings
+  hs-source-dirs: src
+  main-is: Main.hs
+  build-depends:
+    base >= 4.20 && < 5,
+    text,
+    organ-ir
+  ghc-options: -Wall

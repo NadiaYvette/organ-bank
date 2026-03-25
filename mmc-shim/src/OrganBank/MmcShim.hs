@@ -7,11 +7,12 @@ Based on Frankenstein's MercuryBridge/HldsParse.hs.
 -}
 module OrganBank.MmcShim (
     extractOrganIR,
+    parseHldsGoal,
 ) where
 
 import Control.Exception (SomeException, catch)
 import Control.Exception qualified
-import Data.Char (isSpace)
+import Data.Char (isAlphaNum, isDigit, isSpace, isUpper)
 import Data.List (isPrefixOf)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
@@ -174,8 +175,7 @@ predToIR uid pred' =
         bodyExpr
             | T.null (T.strip clauseTxt) =
                 IR.EApp (IR.eVar "hlds_clause") [IR.eString "<empty>"]
-            | otherwise =
-                IR.EApp (IR.eVar "hlds_clause") [IR.eString clauseTxt]
+            | otherwise = parseHldsGoal clauseTxt
      in IR.Definition
         { IR.defName = IR.QName "" (IR.Name (T.pack (predName pred')) uid)
         , IR.defType =
@@ -188,3 +188,238 @@ predToIR uid pred' =
         , IR.defVisibility = IR.Public
         , IR.defArity = predArity pred'
         }
+
+-- ---------------------------------------------------------------------------
+-- Mercury HLDS goal parser
+-- ---------------------------------------------------------------------------
+
+-- | Parse a Mercury HLDS goal structure into OrganIR Expr.
+-- Best-effort: falls back to @eApp (eVar "hlds") [eString text]@.
+parseHldsGoal :: Text -> IR.Expr
+parseHldsGoal txt =
+    let stripped = T.strip txt
+     in parseGoal (T.unpack stripped)
+
+-- | Fallback: wrap unparsed text.
+hldsFallback :: String -> IR.Expr
+hldsFallback s = IR.EApp (IR.eVar "hlds") [IR.eString (T.pack s)]
+
+-- | Parse a goal string.
+parseGoal :: String -> IR.Expr
+parseGoal s =
+    let s' = trimHlds s
+     in case s' of
+            -- Empty
+            [] -> hldsFallback ""
+            -- Parenthesized if-then-else: ( cond -> then ; else )
+            ('(' : rest) -> parseParenGoal rest
+            -- Try conjunction, disjunction, unification, call
+            _ -> parseConjunction s'
+
+-- | Parse a parenthesized goal: ( cond -> then ; else ) or ( disj1 ; disj2 )
+parseParenGoal :: String -> IR.Expr
+parseParenGoal s =
+    -- Find the matching close paren and extract inner content
+    let inner = takeMatchingParen s
+        inner' = trimHlds inner
+     in case splitOnArrow inner' of
+            Just (cond, thenElse) ->
+                -- if-then-else: cond -> then ; else
+                case splitOnTopSemicolon thenElse of
+                    Just (thenPart, elsePart) ->
+                        let condExpr = parseGoal (trimHlds cond)
+                            thenExpr = parseGoal (trimHlds thenPart)
+                            elseExpr = parseGoal (trimHlds elsePart)
+                         in IR.ECase condExpr
+                                [ IR.Branch (IR.PatCon (IR.localName "true") []) thenExpr
+                                , IR.Branch (IR.PatCon (IR.localName "false") []) elseExpr
+                                ]
+                    Nothing ->
+                        let condExpr = parseGoal (trimHlds cond)
+                            thenExpr = parseGoal (trimHlds thenElse)
+                         in IR.ECase condExpr
+                                [ IR.Branch (IR.PatCon (IR.localName "true") []) thenExpr
+                                ]
+            Nothing ->
+                -- Maybe disjunction: goal1 ; goal2
+                case splitOnTopSemicolon inner' of
+                    Just (left, right) ->
+                        let leftExpr = parseGoal (trimHlds left)
+                            rightExpr = parseGoal (trimHlds right)
+                         in IR.ECase (IR.eVar "_disj")
+                                [ IR.Branch (IR.PatCon (IR.localName "left") []) leftExpr
+                                , IR.Branch (IR.PatCon (IR.localName "right") []) rightExpr
+                                ]
+                    Nothing -> parseGoal inner'
+
+-- | Parse a conjunction: goal1, goal2, goal3
+-- Splits on top-level commas and nests as ELet bindings.
+parseConjunction :: String -> IR.Expr
+parseConjunction s =
+    let parts = splitOnTopComma s
+     in case parts of
+            [] -> hldsFallback s
+            [single] -> parseSingleGoal (trimHlds single)
+            _ -> conjunctionToLet parts
+
+-- | Convert a list of conjunct strings to nested ELet bindings.
+conjunctionToLet :: [String] -> IR.Expr
+conjunctionToLet [] = hldsFallback ""
+conjunctionToLet [single] = parseSingleGoal (trimHlds single)
+conjunctionToLet (g : gs) =
+    let goalExpr = parseSingleGoal (trimHlds g)
+     in case parseAsUnification (trimHlds g) of
+            Just (var, rhs) ->
+                -- X = expr becomes let X = expr in rest
+                IR.ELet
+                    [IR.LetBind (IR.Name (T.pack var) 0) Nothing rhs]
+                    (conjunctionToLet gs)
+            Nothing ->
+                -- Non-unification goal: bind to _gN
+                let bindName = "_g" ++ show (length gs)
+                 in IR.ELet
+                        [IR.LetBind (IR.Name (T.pack bindName) 0) Nothing goalExpr]
+                        (conjunctionToLet gs)
+
+-- | Parse a single atomic goal (not conjunction/disjunction).
+parseSingleGoal :: String -> IR.Expr
+parseSingleGoal s =
+    let s' = trimHlds s
+     in case s' of
+            [] -> hldsFallback ""
+            ('(' : _) -> parseParenGoal (drop 1 s')
+            _ | Just (var, rhs) <- parseAsUnification s' -> rhs
+              | Just (pred', args) <- parseAsCall s' ->
+                    IR.EApp (IR.eVar (T.pack pred')) (map (IR.eVar . T.pack) args)
+              | Just n <- readInt s' -> IR.eInt n
+              | otherwise -> hldsFallback s'
+
+-- | Try to parse "X = expr" as a unification.
+parseAsUnification :: String -> Maybe (String, IR.Expr)
+parseAsUnification s =
+    case splitOnTopEquals s of
+        Just (lhs, rhs) ->
+            let lhs' = trimHlds lhs
+                rhs' = trimHlds rhs
+             in if isVarName lhs'
+                    then Just (lhs', parseRhsExpr rhs')
+                    else Nothing
+        Nothing -> Nothing
+
+-- | Parse the RHS of a unification.
+parseRhsExpr :: String -> IR.Expr
+parseRhsExpr s
+    | Just n <- readInt s = IR.eInt n
+    | Just inner <- stripQuotesHlds s = IR.eString (T.pack inner)
+    | Just (f, args) <- parseAsCall s =
+        IR.EApp (IR.eVar (T.pack f)) (map (IR.eVar . T.pack) args)
+    | isVarName s = IR.eVar (T.pack s)
+    | otherwise =
+        -- Try to parse infix expression like "X - 1" or "X * W"
+        case parseInfix s of
+            Just expr -> expr
+            Nothing -> hldsFallback s
+
+-- | Parse infix expression: A op B
+parseInfix :: String -> Maybe IR.Expr
+parseInfix s =
+    let tokens = words s
+     in case tokens of
+            [a, op, b] | op `elem` ["+", "-", "*", "/", "//", "mod", "rem", "<", ">", "=<", ">=", "=:=", "=\\="] ->
+                Just $ IR.EApp (IR.eVar (T.pack op)) [tokenToExpr a, tokenToExpr b]
+            _ -> Nothing
+
+-- | Convert a single token to an expression.
+tokenToExpr :: String -> IR.Expr
+tokenToExpr s
+    | Just n <- readInt s = IR.eInt n
+    | otherwise = IR.eVar (T.pack s)
+
+-- | Try to parse "pred(arg1, arg2, ...)" as a call.
+parseAsCall :: String -> Maybe (String, [String])
+parseAsCall s =
+    let (name', rest) = span (\c -> isAlphaNum c || c == '_' || c == '.' || c == ':') s
+     in case rest of
+            ('(' : args) ->
+                let argStr = takeMatchingParen args
+                    argList = splitArgs argStr
+                 in if null name' then Nothing else Just (name', map trimHlds argList)
+            _ -> Nothing
+
+-- | Split arguments on commas, respecting nesting.
+splitArgs :: String -> [String]
+splitArgs = splitOnTopChar ','
+
+-- | Check if a string is a Mercury variable name (starts with uppercase or _).
+isVarName :: String -> Bool
+isVarName [] = False
+isVarName (c : _) = isUpper c || c == '_'
+
+-- | Split on top-level " -> " (not inside parens).
+splitOnArrow :: String -> Maybe (String, String)
+splitOnArrow = splitOnTopStr " -> "
+
+-- | Split on top-level " ; " or ";\n" (not inside parens).
+splitOnTopSemicolon :: String -> Maybe (String, String)
+splitOnTopSemicolon s = splitOnTopStr ";" s
+
+-- | Split on top-level " = " (not inside parens).
+splitOnTopEquals :: String -> Maybe (String, String)
+splitOnTopEquals = splitOnTopStr " = "
+
+-- | Split on a top-level delimiter string, not inside parentheses.
+splitOnTopStr :: String -> String -> Maybe (String, String)
+splitOnTopStr delim = go 0 []
+  where
+    n = length delim
+    go :: Int -> String -> String -> Maybe (String, String)
+    go _ _ [] = Nothing
+    go 0 acc s
+        | take n s == delim = Just (reverse acc, drop n s)
+    go depth acc ('(' : rest) = go (depth + 1) ('(' : acc) rest
+    go depth acc (')' : rest) = go (max 0 (depth - 1)) (')' : acc) rest
+    go depth acc (c : rest) = go depth (c : acc) rest
+
+-- | Split on top-level commas, not inside parentheses.
+splitOnTopComma :: String -> [String]
+splitOnTopComma = splitOnTopChar ','
+
+-- | Split on a top-level character, respecting parentheses.
+splitOnTopChar :: Char -> String -> [String]
+splitOnTopChar sep = go 0 [] []
+  where
+    go :: Int -> String -> [String] -> String -> [String]
+    go _ cur acc [] = reverse (reverse cur : acc)
+    go 0 cur acc (c : rest)
+        | c == sep = go 0 [] (reverse cur : acc) rest
+    go depth cur acc ('(' : rest) = go (depth + 1) ('(' : cur) acc rest
+    go depth cur acc (')' : rest) = go (max 0 (depth - 1)) (')' : cur) acc rest
+    go depth cur acc (c : rest) = go depth (c : cur) acc rest
+
+-- | Take content inside matching parentheses.
+takeMatchingParen :: String -> String
+takeMatchingParen = go (0 :: Int) []
+  where
+    go _ acc [] = reverse acc
+    go 0 acc (')' : _) = reverse acc
+    go n acc ('(' : rest) = go (n + 1) ('(' : acc) rest
+    go n acc (')' : rest) = go (n - 1) (')' : acc) rest
+    go n acc (c : rest) = go n (c : acc) rest
+
+-- | Trim whitespace.
+trimHlds :: String -> String
+trimHlds = reverse . dropWhile isSpace . reverse . dropWhile isSpace
+
+-- | Try to read an integer.
+readInt :: String -> Maybe Integer
+readInt s = case s of
+    ('-' : rest) | not (null rest), all isDigit rest -> Just (read s)
+    _ | not (null s), all isDigit s -> Just (read s)
+    _ -> Nothing
+
+-- | Strip surrounding quotes.
+stripQuotesHlds :: String -> Maybe String
+stripQuotesHlds ('"' : rest) = case reverse rest of
+    ('"' : inner) -> Just (reverse inner)
+    _ -> Nothing
+stripQuotesHlds _ = Nothing

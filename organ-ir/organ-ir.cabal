@@ -27,6 +27,7 @@ library
     OrganIR.Build
     OrganIR.Json
     OrganIR.Parse
+    OrganIR.Schema
     OrganIR.Validate
     OrganIR.Pretty
   build-depends:

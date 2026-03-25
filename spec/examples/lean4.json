@@ -1,0 +1,247 @@
+{
+  "schema_version": "1.0.0",
+  "metadata": {
+    "source_language": "lean4",
+    "compiler_version": "lean4-4.6.0",
+    "source_file": "Factorial.lean",
+    "shim_version": "example-1.0"
+  },
+  "module": {
+    "name": "Factorial",
+    "exports": [
+      "factorial"
+    ],
+    "definitions": [
+      {
+        "name": {
+          "module": "Factorial",
+          "name": {
+            "text": "factorial",
+            "unique": 1
+          }
+        },
+        "type": {
+          "fn": {
+            "args": [
+              {
+                "type": {
+                  "con": {
+                    "qname": {
+                      "module": "Lean",
+                      "name": {
+                        "text": "Nat",
+                        "unique": 0
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "effect": {
+              "effects": []
+            },
+            "result": {
+              "con": {
+                "qname": {
+                  "module": "Lean",
+                  "name": {
+                    "text": "Nat",
+                    "unique": 0
+                  }
+                }
+              }
+            }
+          }
+        },
+        "expr": {
+          "elam": {
+            "params": [
+              {
+                "name": {
+                  "text": "n",
+                  "unique": 2
+                },
+                "type": {
+                  "con": {
+                    "qname": {
+                      "module": "Lean",
+                      "name": {
+                        "text": "Nat",
+                        "unique": 0
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "body": {
+              "elet": {
+                "binds": [
+                  {
+                    "name": {
+                      "text": "isZero",
+                      "unique": 3
+                    },
+                    "type": {
+                      "con": {
+                        "qname": {
+                          "module": "Lean",
+                          "name": {
+                            "text": "Bool",
+                            "unique": 0
+                          }
+                        }
+                      }
+                    },
+                    "expr": {
+                      "eapp": {
+                        "fn": {
+                          "evar": {
+                            "text": "==",
+                            "unique": 0
+                          }
+                        },
+                        "args": [
+                          {
+                            "evar": {
+                              "text": "n",
+                              "unique": 2
+                            }
+                          },
+                          {
+                            "elit": {
+                              "int": 0
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ],
+                "body": {
+                  "ecase": {
+                    "scrutinee": {
+                      "evar": {
+                        "text": "isZero",
+                        "unique": 3
+                      }
+                    },
+                    "branches": [
+                      {
+                        "pattern": {
+                          "pat_lit": {
+                            "bool": true
+                          }
+                        },
+                        "body": {
+                          "elit": {
+                            "int": 1
+                          }
+                        }
+                      },
+                      {
+                        "pattern": {
+                          "pat_lit": {
+                            "bool": false
+                          }
+                        },
+                        "body": {
+                          "elet": {
+                            "binds": [
+                              {
+                                "name": {
+                                  "text": "pred",
+                                  "unique": 4
+                                },
+                                "expr": {
+                                  "eapp": {
+                                    "fn": {
+                                      "evar": {
+                                        "text": "-",
+                                        "unique": 0
+                                      }
+                                    },
+                                    "args": [
+                                      {
+                                        "evar": {
+                                          "text": "n",
+                                          "unique": 2
+                                        }
+                                      },
+                                      {
+                                        "elit": {
+                                          "int": 1
+                                        }
+                                      }
+                                    ]
+                                  }
+                                }
+                              },
+                              {
+                                "name": {
+                                  "text": "rec",
+                                  "unique": 5
+                                },
+                                "expr": {
+                                  "eapp": {
+                                    "fn": {
+                                      "evar": {
+                                        "text": "factorial",
+                                        "unique": 1
+                                      }
+                                    },
+                                    "args": [
+                                      {
+                                        "evar": {
+                                          "text": "pred",
+                                          "unique": 4
+                                        }
+                                      }
+                                    ]
+                                  }
+                                }
+                              }
+                            ],
+                            "body": {
+                              "eapp": {
+                                "fn": {
+                                  "evar": {
+                                    "text": "*",
+                                    "unique": 0
+                                  }
+                                },
+                                "args": [
+                                  {
+                                    "evar": {
+                                      "text": "n",
+                                      "unique": 2
+                                    }
+                                  },
+                                  {
+                                    "evar": {
+                                      "text": "rec",
+                                      "unique": 5
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "sort": "fun",
+        "visibility": "public",
+        "arity": 1
+      }
+    ],
+    "data_types": [],
+    "effect_decls": []
+  }
+}

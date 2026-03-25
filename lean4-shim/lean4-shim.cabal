@@ -1,0 +1,20 @@
+cabal-version:   3.0
+name:            lean4-shim
+version:         0.1.0.0
+synopsis:        Extract Lean 4 LCNF and emit OrganIR JSON
+license:         GPL-2.0-only
+build-type:      Simple
+
+executable lean4-organ-hs
+  default-language: GHC2024
+  default-extensions: OverloadedStrings, ImportQualifiedPost
+  hs-source-dirs:   src
+  main-is:          Main.hs
+  other-modules:    OrganBank.Lean4Shim
+  build-depends:
+    base        >= 4.18 && < 5,
+    text        >= 2.0,
+    process     >= 1.6,
+    filepath    >= 1.4,
+    organ-ir
+  ghc-options: -Wall -O2

@@ -1,0 +1,225 @@
+{
+  "schema_version": "1.0.0",
+  "metadata": {
+    "source_language": "forth",
+    "compiler_version": "gforth-0.7.3",
+    "source_file": "factorial.fs",
+    "shim_version": "example-1.0"
+  },
+  "module": {
+    "name": "factorial",
+    "exports": [
+      "factorial"
+    ],
+    "definitions": [
+      {
+        "name": {
+          "module": "factorial",
+          "name": {
+            "text": "factorial",
+            "unique": 1
+          }
+        },
+        "type": {
+          "fn": {
+            "args": [
+              {
+                "type": {
+                  "con": {
+                    "qname": {
+                      "module": "",
+                      "name": {
+                        "text": "any",
+                        "unique": 0
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "effect": {
+              "effects": []
+            },
+            "result": {
+              "con": {
+                "qname": {
+                  "module": "",
+                  "name": {
+                    "text": "any",
+                    "unique": 0
+                  }
+                }
+              }
+            }
+          }
+        },
+        "expr": {
+          "elam": {
+            "params": [
+              {
+                "name": {
+                  "text": "tos",
+                  "unique": 2
+                }
+              }
+            ],
+            "body": {
+              "elet": {
+                "binds": [
+                  {
+                    "name": {
+                      "text": "acc",
+                      "unique": 3
+                    },
+                    "expr": {
+                      "elit": {
+                        "int": 1
+                      }
+                    }
+                  }
+                ],
+                "body": {
+                  "ecase": {
+                    "scrutinee": {
+                      "eapp": {
+                        "fn": {
+                          "evar": {
+                            "text": "<=",
+                            "unique": 0
+                          }
+                        },
+                        "args": [
+                          {
+                            "evar": {
+                              "text": "tos",
+                              "unique": 2
+                            }
+                          },
+                          {
+                            "elit": {
+                              "int": 1
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    "branches": [
+                      {
+                        "pattern": {
+                          "pat_lit": {
+                            "bool": true
+                          }
+                        },
+                        "body": {
+                          "evar": {
+                            "text": "acc",
+                            "unique": 3
+                          }
+                        }
+                      },
+                      {
+                        "pattern": {
+                          "pat_lit": {
+                            "bool": false
+                          }
+                        },
+                        "body": {
+                          "elet": {
+                            "binds": [
+                              {
+                                "name": {
+                                  "text": "acc2",
+                                  "unique": 4
+                                },
+                                "expr": {
+                                  "eapp": {
+                                    "fn": {
+                                      "evar": {
+                                        "text": "*",
+                                        "unique": 0
+                                      }
+                                    },
+                                    "args": [
+                                      {
+                                        "evar": {
+                                          "text": "tos",
+                                          "unique": 2
+                                        }
+                                      },
+                                      {
+                                        "evar": {
+                                          "text": "acc",
+                                          "unique": 3
+                                        }
+                                      }
+                                    ]
+                                  }
+                                }
+                              },
+                              {
+                                "name": {
+                                  "text": "tos2",
+                                  "unique": 5
+                                },
+                                "expr": {
+                                  "eapp": {
+                                    "fn": {
+                                      "evar": {
+                                        "text": "-",
+                                        "unique": 0
+                                      }
+                                    },
+                                    "args": [
+                                      {
+                                        "evar": {
+                                          "text": "tos",
+                                          "unique": 2
+                                        }
+                                      },
+                                      {
+                                        "elit": {
+                                          "int": 1
+                                        }
+                                      }
+                                    ]
+                                  }
+                                }
+                              }
+                            ],
+                            "body": {
+                              "eapp": {
+                                "fn": {
+                                  "evar": {
+                                    "text": "factorial",
+                                    "unique": 1
+                                  }
+                                },
+                                "args": [
+                                  {
+                                    "evar": {
+                                      "text": "tos2",
+                                      "unique": 5
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "sort": "fun",
+        "visibility": "public",
+        "arity": 1
+      }
+    ],
+    "data_types": [],
+    "effect_decls": []
+  }
+}

@@ -1,0 +1,188 @@
+{
+  "schema_version": "1.0.0",
+  "metadata": {
+    "source_language": "zig",
+    "compiler_version": "zig-0.13.0",
+    "source_file": "factorial.zig",
+    "shim_version": "example-1.0"
+  },
+  "module": {
+    "name": "factorial",
+    "exports": [
+      "factorial"
+    ],
+    "definitions": [
+      {
+        "name": {
+          "module": "factorial",
+          "name": {
+            "text": "factorial",
+            "unique": 1
+          }
+        },
+        "type": {
+          "fn": {
+            "args": [
+              {
+                "type": {
+                  "con": {
+                    "qname": {
+                      "module": "std",
+                      "name": {
+                        "text": "u64",
+                        "unique": 0
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "effect": {
+              "effects": []
+            },
+            "result": {
+              "con": {
+                "qname": {
+                  "module": "std",
+                  "name": {
+                    "text": "u64",
+                    "unique": 0
+                  }
+                }
+              }
+            }
+          }
+        },
+        "expr": {
+          "elam": {
+            "params": [
+              {
+                "name": {
+                  "text": "n",
+                  "unique": 2
+                },
+                "type": {
+                  "con": {
+                    "qname": {
+                      "module": "std",
+                      "name": {
+                        "text": "u64",
+                        "unique": 0
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "body": {
+              "ecase": {
+                "scrutinee": {
+                  "eapp": {
+                    "fn": {
+                      "evar": {
+                        "text": "==",
+                        "unique": 0
+                      }
+                    },
+                    "args": [
+                      {
+                        "evar": {
+                          "text": "n",
+                          "unique": 2
+                        }
+                      },
+                      {
+                        "elit": {
+                          "int": 0
+                        }
+                      }
+                    ]
+                  }
+                },
+                "branches": [
+                  {
+                    "pattern": {
+                      "pat_lit": {
+                        "bool": true
+                      }
+                    },
+                    "body": {
+                      "elit": {
+                        "int": 1
+                      }
+                    }
+                  },
+                  {
+                    "pattern": {
+                      "pat_lit": {
+                        "bool": false
+                      }
+                    },
+                    "body": {
+                      "eapp": {
+                        "fn": {
+                          "evar": {
+                            "text": "*",
+                            "unique": 0
+                          }
+                        },
+                        "args": [
+                          {
+                            "evar": {
+                              "text": "n",
+                              "unique": 2
+                            }
+                          },
+                          {
+                            "eapp": {
+                              "fn": {
+                                "evar": {
+                                  "text": "factorial",
+                                  "unique": 1
+                                }
+                              },
+                              "args": [
+                                {
+                                  "eapp": {
+                                    "fn": {
+                                      "evar": {
+                                        "text": "-",
+                                        "unique": 0
+                                      }
+                                    },
+                                    "args": [
+                                      {
+                                        "evar": {
+                                          "text": "n",
+                                          "unique": 2
+                                        }
+                                      },
+                                      {
+                                        "elit": {
+                                          "int": 1
+                                        }
+                                      }
+                                    ]
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "sort": "fun",
+        "visibility": "public",
+        "arity": 1
+      }
+    ],
+    "data_types": [],
+    "effect_decls": []
+  }
+}

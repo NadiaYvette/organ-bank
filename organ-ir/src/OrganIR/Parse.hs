@@ -2,7 +2,7 @@
 Inverts every @render*@ function in "OrganIR.Json" to produce
 OrganIR types from JSON text, with no dependencies beyond base and text.
 -}
-module OrganIR.Parse (parseOrganIR) where
+module OrganIR.Parse (parseOrganIR, JVal (..), parseJSON) where
 
 import Data.Char (chr, digitToInt, isDigit, isHexDigit, isSpace)
 import Data.Text (Text)

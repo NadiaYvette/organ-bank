@@ -1,0 +1,251 @@
+{
+  "schema_version": "1.0.0",
+  "metadata": {
+    "source_language": "koka",
+    "compiler_version": "koka-3.1.2",
+    "source_file": "factorial.kk",
+    "shim_version": "example-1.0"
+  },
+  "module": {
+    "name": "factorial",
+    "exports": [
+      "factorial"
+    ],
+    "definitions": [
+      {
+        "name": {
+          "module": "factorial",
+          "name": {
+            "text": "factorial",
+            "unique": 1
+          }
+        },
+        "type": {
+          "fn": {
+            "args": [
+              {
+                "type": {
+                  "con": {
+                    "qname": {
+                      "module": "std/core",
+                      "name": {
+                        "text": "int",
+                        "unique": 0
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "effect": {
+              "effects": [
+                {
+                  "module": "std/core",
+                  "name": {
+                    "text": "div",
+                    "unique": 0
+                  }
+                },
+                {
+                  "module": "std/core",
+                  "name": {
+                    "text": "exn",
+                    "unique": 0
+                  }
+                }
+              ]
+            },
+            "result": {
+              "con": {
+                "qname": {
+                  "module": "std/core",
+                  "name": {
+                    "text": "int",
+                    "unique": 0
+                  }
+                }
+              }
+            }
+          }
+        },
+        "expr": {
+          "elam": {
+            "params": [
+              {
+                "name": {
+                  "text": "n",
+                  "unique": 2
+                },
+                "type": {
+                  "con": {
+                    "qname": {
+                      "module": "std/core",
+                      "name": {
+                        "text": "int",
+                        "unique": 0
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "body": {
+              "ecase": {
+                "scrutinee": {
+                  "eapp": {
+                    "fn": {
+                      "evar": {
+                        "text": "<",
+                        "unique": 0
+                      }
+                    },
+                    "args": [
+                      {
+                        "evar": {
+                          "text": "n",
+                          "unique": 2
+                        }
+                      },
+                      {
+                        "elit": {
+                          "int": 0
+                        }
+                      }
+                    ]
+                  }
+                },
+                "branches": [
+                  {
+                    "pattern": {
+                      "pat_lit": {
+                        "bool": true
+                      }
+                    },
+                    "body": {
+                      "eperform": {
+                        "effect": {
+                          "module": "std/core",
+                          "name": {
+                            "text": "exn",
+                            "unique": 0
+                          }
+                        },
+                        "op": "raise",
+                        "args": [
+                          {
+                            "elit": {
+                              "string": "factorial: negative argument"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "pattern": {
+                      "pat_lit": {
+                        "bool": false
+                      }
+                    },
+                    "body": {
+                      "ecase": {
+                        "scrutinee": {
+                          "evar": {
+                            "text": "n",
+                            "unique": 2
+                          }
+                        },
+                        "branches": [
+                          {
+                            "pattern": {
+                              "pat_lit": {
+                                "int": 0
+                              }
+                            },
+                            "body": {
+                              "elit": {
+                                "int": 1
+                              }
+                            }
+                          },
+                          {
+                            "pattern": {
+                              "pat_var": {
+                                "name": {
+                                  "text": "n",
+                                  "unique": 2
+                                }
+                              }
+                            },
+                            "body": {
+                              "eapp": {
+                                "fn": {
+                                  "evar": {
+                                    "text": "*",
+                                    "unique": 0
+                                  }
+                                },
+                                "args": [
+                                  {
+                                    "evar": {
+                                      "text": "n",
+                                      "unique": 2
+                                    }
+                                  },
+                                  {
+                                    "eapp": {
+                                      "fn": {
+                                        "evar": {
+                                          "text": "factorial",
+                                          "unique": 1
+                                        }
+                                      },
+                                      "args": [
+                                        {
+                                          "eapp": {
+                                            "fn": {
+                                              "evar": {
+                                                "text": "-",
+                                                "unique": 0
+                                              }
+                                            },
+                                            "args": [
+                                              {
+                                                "evar": {
+                                                  "text": "n",
+                                                  "unique": 2
+                                                }
+                                              },
+                                              {
+                                                "elit": {
+                                                  "int": 1
+                                                }
+                                              }
+                                            ]
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "sort": "fun",
+        "visibility": "public",
+        "arity": 1
+      }
+    ],
+    "data_types": [],
+    "effect_decls": []
+  }
+}

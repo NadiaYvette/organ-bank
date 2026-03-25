@@ -1,0 +1,248 @@
+{
+  "schema_version": "1.0.0",
+  "metadata": {
+    "source_language": "rust",
+    "compiler_version": "rustc-1.95.0-nightly",
+    "source_file": "factorial.rs",
+    "shim_version": "example-1.0"
+  },
+  "module": {
+    "name": "factorial",
+    "exports": [
+      "factorial"
+    ],
+    "definitions": [
+      {
+        "name": {
+          "module": "factorial",
+          "name": {
+            "text": "factorial",
+            "unique": 1
+          }
+        },
+        "type": {
+          "fn": {
+            "args": [
+              {
+                "multiplicity": "affine",
+                "type": {
+                  "con": {
+                    "qname": {
+                      "module": "std",
+                      "name": {
+                        "text": "i64",
+                        "unique": 0
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "effect": {
+              "effects": []
+            },
+            "result": {
+              "con": {
+                "qname": {
+                  "module": "std",
+                  "name": {
+                    "text": "i64",
+                    "unique": 0
+                  }
+                }
+              }
+            }
+          }
+        },
+        "expr": {
+          "elam": {
+            "params": [
+              {
+                "name": {
+                  "text": "n",
+                  "unique": 2
+                },
+                "type": {
+                  "con": {
+                    "qname": {
+                      "module": "std",
+                      "name": {
+                        "text": "i64",
+                        "unique": 0
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "body": {
+              "elet": {
+                "binds": [
+                  {
+                    "name": {
+                      "text": "result",
+                      "unique": 3
+                    },
+                    "type": {
+                      "con": {
+                        "qname": {
+                          "module": "std",
+                          "name": {
+                            "text": "i64",
+                            "unique": 0
+                          }
+                        }
+                      }
+                    },
+                    "expr": {
+                      "elit": {
+                        "int": 1
+                      }
+                    }
+                  }
+                ],
+                "body": {
+                  "ecase": {
+                    "scrutinee": {
+                      "eapp": {
+                        "fn": {
+                          "evar": {
+                            "text": "<=",
+                            "unique": 0
+                          }
+                        },
+                        "args": [
+                          {
+                            "evar": {
+                              "text": "n",
+                              "unique": 2
+                            }
+                          },
+                          {
+                            "elit": {
+                              "int": 1
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    "branches": [
+                      {
+                        "pattern": {
+                          "pat_lit": {
+                            "bool": true
+                          }
+                        },
+                        "body": {
+                          "eretain": {
+                            "text": "result",
+                            "unique": 3
+                          }
+                        }
+                      },
+                      {
+                        "pattern": {
+                          "pat_lit": {
+                            "bool": false
+                          }
+                        },
+                        "body": {
+                          "elet": {
+                            "binds": [
+                              {
+                                "name": {
+                                  "text": "sub",
+                                  "unique": 4
+                                },
+                                "expr": {
+                                  "eapp": {
+                                    "fn": {
+                                      "evar": {
+                                        "text": "-",
+                                        "unique": 0
+                                      }
+                                    },
+                                    "args": [
+                                      {
+                                        "evar": {
+                                          "text": "n",
+                                          "unique": 2
+                                        }
+                                      },
+                                      {
+                                        "elit": {
+                                          "int": 1
+                                        }
+                                      }
+                                    ]
+                                  }
+                                }
+                              },
+                              {
+                                "name": {
+                                  "text": "rec",
+                                  "unique": 5
+                                },
+                                "expr": {
+                                  "eapp": {
+                                    "fn": {
+                                      "evar": {
+                                        "text": "factorial",
+                                        "unique": 1
+                                      }
+                                    },
+                                    "args": [
+                                      {
+                                        "evar": {
+                                          "text": "sub",
+                                          "unique": 4
+                                        }
+                                      }
+                                    ]
+                                  }
+                                }
+                              }
+                            ],
+                            "body": {
+                              "eapp": {
+                                "fn": {
+                                  "evar": {
+                                    "text": "*",
+                                    "unique": 0
+                                  }
+                                },
+                                "args": [
+                                  {
+                                    "evar": {
+                                      "text": "n",
+                                      "unique": 2
+                                    }
+                                  },
+                                  {
+                                    "evar": {
+                                      "text": "rec",
+                                      "unique": 5
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "sort": "fun",
+        "visibility": "public",
+        "arity": 1
+      }
+    ],
+    "data_types": [],
+    "effect_decls": []
+  }
+}

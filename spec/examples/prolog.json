@@ -1,0 +1,90 @@
+{
+  "schema_version": "1.0.0",
+  "metadata": {
+    "source_language": "prolog",
+    "compiler_version": "swipl-9.2.5",
+    "source_file": "factorial.pl",
+    "shim_version": "example-1.0"
+  },
+  "module": {
+    "name": "factorial",
+    "exports": ["factorial"],
+    "definitions": [
+      {
+        "name": {"module": "factorial", "name": {"text": "factorial", "unique": 1}},
+        "type": {
+          "fn": {
+            "args": [
+              {"type": {"con": {"qname": {"module": "", "name": {"text": "any", "unique": 0}}}}},
+              {"type": {"con": {"qname": {"module": "", "name": {"text": "any", "unique": 0}}}}}
+            ],
+            "effect": {"effects": []},
+            "result": {"con": {"qname": {"module": "", "name": {"text": "any", "unique": 0}}}}
+          }
+        },
+        "expr": {
+          "elam": {
+            "params": [
+              {"name": {"text": "N", "unique": 2}},
+              {"name": {"text": "Acc", "unique": 3}}
+            ],
+            "body": {
+              "ecase": {
+                "scrutinee": {
+                  "eapp": {
+                    "fn": {"evar": {"text": "=:=", "unique": 0}},
+                    "args": [{"evar": {"text": "N", "unique": 2}}, {"elit": {"int": 0}}]
+                  }
+                },
+                "branches": [
+                  {
+                    "pattern": {"pat_lit": {"bool": true}},
+                    "body": {"evar": {"text": "Acc", "unique": 3}}
+                  },
+                  {
+                    "pattern": {"pat_lit": {"bool": false}},
+                    "body": {
+                      "elet": {
+                        "binds": [
+                          {
+                            "name": {"text": "N1", "unique": 4},
+                            "expr": {
+                              "eapp": {
+                                "fn": {"evar": {"text": "-", "unique": 0}},
+                                "args": [{"evar": {"text": "N", "unique": 2}}, {"elit": {"int": 1}}]
+                              }
+                            }
+                          },
+                          {
+                            "name": {"text": "Acc1", "unique": 5},
+                            "expr": {
+                              "eapp": {
+                                "fn": {"evar": {"text": "*", "unique": 0}},
+                                "args": [{"evar": {"text": "N", "unique": 2}}, {"evar": {"text": "Acc", "unique": 3}}]
+                              }
+                            }
+                          }
+                        ],
+                        "body": {
+                          "eapp": {
+                            "fn": {"evar": {"text": "factorial", "unique": 1}},
+                            "args": [{"evar": {"text": "N1", "unique": 4}}, {"evar": {"text": "Acc1", "unique": 5}}]
+                          }
+                        }
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "sort": "fun",
+        "visibility": "public",
+        "arity": 2
+      }
+    ],
+    "data_types": [],
+    "effect_decls": []
+  }
+}

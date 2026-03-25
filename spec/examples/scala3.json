@@ -1,0 +1,177 @@
+{
+  "schema_version": "1.0.0",
+  "metadata": {
+    "source_language": "scala3",
+    "compiler_version": "scala-3.5.0",
+    "source_file": "Factorial.scala",
+    "shim_version": "example-1.0"
+  },
+  "module": {
+    "name": "Factorial",
+    "exports": [
+      "factorial"
+    ],
+    "definitions": [
+      {
+        "name": {
+          "module": "Factorial",
+          "name": {
+            "text": "factorial",
+            "unique": 1
+          }
+        },
+        "type": {
+          "fn": {
+            "args": [
+              {
+                "type": {
+                  "con": {
+                    "qname": {
+                      "module": "",
+                      "name": {
+                        "text": "any",
+                        "unique": 0
+                      }
+                    }
+                  }
+                }
+              }
+            ],
+            "effect": {
+              "effects": []
+            },
+            "result": {
+              "con": {
+                "qname": {
+                  "module": "",
+                  "name": {
+                    "text": "any",
+                    "unique": 0
+                  }
+                }
+              }
+            }
+          }
+        },
+        "expr": {
+          "elam": {
+            "params": [
+              {
+                "name": {
+                  "text": "n",
+                  "unique": 2
+                }
+              }
+            ],
+            "body": {
+              "ecase": {
+                "scrutinee": {
+                  "eapp": {
+                    "fn": {
+                      "evar": {
+                        "text": "<=",
+                        "unique": 0
+                      }
+                    },
+                    "args": [
+                      {
+                        "evar": {
+                          "text": "n",
+                          "unique": 2
+                        }
+                      },
+                      {
+                        "elit": {
+                          "int": 0
+                        }
+                      }
+                    ]
+                  }
+                },
+                "branches": [
+                  {
+                    "pattern": {
+                      "pat_lit": {
+                        "bool": true
+                      }
+                    },
+                    "body": {
+                      "elit": {
+                        "int": 1
+                      }
+                    }
+                  },
+                  {
+                    "pattern": {
+                      "pat_lit": {
+                        "bool": false
+                      }
+                    },
+                    "body": {
+                      "eapp": {
+                        "fn": {
+                          "evar": {
+                            "text": "*",
+                            "unique": 0
+                          }
+                        },
+                        "args": [
+                          {
+                            "evar": {
+                              "text": "n",
+                              "unique": 2
+                            }
+                          },
+                          {
+                            "eapp": {
+                              "fn": {
+                                "evar": {
+                                  "text": "factorial",
+                                  "unique": 1
+                                }
+                              },
+                              "args": [
+                                {
+                                  "eapp": {
+                                    "fn": {
+                                      "evar": {
+                                        "text": "-",
+                                        "unique": 0
+                                      }
+                                    },
+                                    "args": [
+                                      {
+                                        "evar": {
+                                          "text": "n",
+                                          "unique": 2
+                                        }
+                                      },
+                                      {
+                                        "elit": {
+                                          "int": 1
+                                        }
+                                      }
+                                    ]
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "sort": "fun",
+        "visibility": "public",
+        "arity": 1
+      }
+    ],
+    "data_types": [],
+    "effect_decls": []
+  }
+}

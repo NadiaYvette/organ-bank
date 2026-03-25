@@ -26,4 +26,6 @@ packages:
   scheme-shim/
   julia-shim/
   zig-shim/
+  lean4-shim/
   organ-extract/
+  organ-diff/
