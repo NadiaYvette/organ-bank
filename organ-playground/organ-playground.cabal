@@ -1,0 +1,32 @@
+cabal-version: 3.0
+name:          organ-playground
+version:       0.1.0
+synopsis:      Web playground for OrganIR extraction from source code
+description:
+  A minimal WAI/Warp web server serving a single-page playground
+  that lets users paste source code in SML, Erlang, Scheme, Prolog,
+  Lua, or Forth and see the OrganIR JSON, pretty-printed output,
+  and validation warnings.
+license:       GPL-2.0-only
+build-type:    Simple
+
+executable organ-playground
+  default-language: GHC2024
+  default-extensions: OverloadedStrings
+  hs-source-dirs: src
+  main-is: Main.hs
+  build-depends:
+    base >= 4.20 && < 5,
+    text,
+    bytestring,
+    warp,
+    wai,
+    http-types,
+    organ-ir,
+    sml-frontend,
+    erlang-frontend,
+    scheme-frontend,
+    prolog-frontend,
+    lua-frontend,
+    forth-frontend
+  ghc-options: -Wall -threaded

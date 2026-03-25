@@ -25,5 +25,6 @@ executable organ-extract
     base >= 4.20 && < 5,
     text,
     process,
-    filepath
+    filepath,
+    directory
   ghc-options: -Wall

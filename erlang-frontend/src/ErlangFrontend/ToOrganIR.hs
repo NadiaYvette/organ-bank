@@ -1,12 +1,17 @@
 {- | Translate Erlang AST to OrganIR.
 Strategy: group function clauses by name/arity → one Definition per function.
 Guard sequences become conjunctive/disjunctive tests via eAnd/eOr.
+Type inference (Hindley-Milner) is run first; inferred types replace TAny
+where possible.
 -}
 module ErlangFrontend.ToOrganIR (emitErlangIR) where
 
+import Data.Map.Strict qualified as Map
 import Data.Text (Text)
 import Data.Text qualified as T
 import ErlangFrontend.AST
+import ErlangFrontend.Infer (erlTypeToOrganTy, inferModule)
+import ErlangFrontend.Infer.Types qualified as Infer.Types
 import OrganIR.Build qualified as IR
 import OrganIR.Json (renderOrganIR)
 import OrganIR.Types qualified as IR
@@ -14,7 +19,10 @@ import OrganIR.Types qualified as IR
 -- | Emit OrganIR JSON for an Erlang program.
 emitErlangIR :: String -> FilePath -> [Form] -> Text
 emitErlangIR modName srcFile forms =
-    let defs = concatMap formToDefs forms
+    let inferResult = inferModule forms
+        -- Types in inferResult are already zonked, so use empty subst
+        subst = Infer.Types.emptySubst
+        defs = concatMap (formToDefsTyped subst inferResult) forms
         exports = extractExports forms
     in  renderOrganIR $
             IR.organIRWithExports IR.LErlang "erlang-frontend-0.1" (T.pack modName) srcFile exports defs
@@ -24,8 +32,9 @@ extractExports :: [Form] -> [Text]
 extractExports forms =
     [ n | FExport pairs <- forms, (n, _arity) <- pairs ]
 
-formToDefs :: Form -> [IR.Definition]
-formToDefs = \case
+-- | Convert a form to definitions, using inferred types where available.
+formToDefsTyped :: Infer.Types.Subst -> Map.Map Text Infer.Types.ErlType -> Form -> [IR.Definition]
+formToDefsTyped subst inferResult = \case
     FFun fname clauses ->
         let arity = case clauses of
                 (FunClause pats _ _ : _) -> length pats
@@ -33,7 +42,11 @@ formToDefs = \case
             params = map (\i -> T.pack ("_A" ++ show i)) [1 .. arity]
             body = clausesToExpr params clauses
             expr = IR.ELam (map (\p -> IR.LamParam (IR.name p) Nothing) params) body
-         in [IR.funDefNA fname arity expr]
+            key = fname <> "/" <> T.pack (show arity)
+            ty = case Map.lookup key inferResult of
+                Just erlTy -> erlTypeToOrganTy subst erlTy
+                Nothing -> IR.TAny
+         in [IR.funDef fname ty expr arity]
     _ -> []
 
 {- | Convert function clauses to an expression.

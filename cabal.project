@@ -29,3 +29,4 @@ packages:
   lean4-shim/
   organ-extract/
   organ-diff/
+  organ-playground/

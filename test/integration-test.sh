@@ -70,7 +70,7 @@ run_integration() {
 
   # Step 5: Frankenstein pipeline (optional)
   if [ "$HAS_FRANKENSTEIN" -eq 1 ]; then
-    if frankenstein --from-organ-ir "$tmpjson" --emit-core >/dev/null 2>&1; then
+    if frankenstein --from-json "$tmpjson" --emit-core >/dev/null 2>&1; then
       pass "$name/frankenstein"
     else
       fail "$name/frankenstein" "frankenstein rejected OrganIR"

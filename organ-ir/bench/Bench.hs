@@ -3,10 +3,12 @@
 module Main (main) where
 
 import Control.Exception (evaluate)
+import Data.ByteString qualified as BS
 import Data.Text (Text)
 import Data.Text qualified as T
 import Test.Tasty.Bench
 
+import OrganIR.Binary (decodeOrganIR, encodeOrganIR)
 import OrganIR.Build
 import OrganIR.Json (renderOrganIR)
 import OrganIR.Parse (parseOrganIR)
@@ -78,6 +80,15 @@ parseAndValidate t = case parseOrganIR t of
 roundtrip :: OrganIR -> Either Text Text
 roundtrip = forceParse . parseOrganIR . renderOrganIR
 
+-- | Force a binary parse result by extracting the module name on success.
+forceBinaryParse :: Either String OrganIR -> Either String Text
+forceBinaryParse (Left err) = Left err
+forceBinaryParse (Right ir) = Right (modName (irModule ir))
+
+-- | Binary encode then decode (round-trip), forcing via module name.
+binaryRoundtrip :: OrganIR -> Either String Text
+binaryRoundtrip = forceBinaryParse . decodeOrganIR . encodeOrganIR
+
 -- * Main
 
 main :: IO ()
@@ -94,11 +105,21 @@ main = do
         json1000 = renderOrganIR mod1000
         jsonDeep = renderOrganIR deepMod
 
+    -- Pre-encode binary for decode benchmarks
+    let bin10 = encodeOrganIR mod10
+        bin100 = encodeOrganIR mod100
+        bin1000 = encodeOrganIR mod1000
+        binDeep = encodeOrganIR deepMod
+
     -- Force the pre-generated data so generation cost is excluded
     _ <- evaluate (T.length json10)
     _ <- evaluate (T.length json100)
     _ <- evaluate (T.length json1000)
     _ <- evaluate (T.length jsonDeep)
+    _ <- evaluate (BS.length bin10)
+    _ <- evaluate (BS.length bin100)
+    _ <- evaluate (BS.length bin1000)
+    _ <- evaluate (BS.length binDeep)
 
     defaultMain
         [ bgroup
@@ -138,5 +159,25 @@ main = do
             [ bench "10 defs" $ nf roundtrip mod10
             , bench "100 defs" $ nf roundtrip mod100
             , bench "1000 defs" $ nf roundtrip mod1000
+            ]
+        , bgroup
+            "binary-encode"
+            [ bench "10 defs" $ nf encodeOrganIR mod10
+            , bench "100 defs" $ nf encodeOrganIR mod100
+            , bench "1000 defs" $ nf encodeOrganIR mod1000
+            , bench "deep-50" $ nf encodeOrganIR deepMod
+            ]
+        , bgroup
+            "binary-decode"
+            [ bench "10 defs" $ nf (forceBinaryParse . decodeOrganIR) bin10
+            , bench "100 defs" $ nf (forceBinaryParse . decodeOrganIR) bin100
+            , bench "1000 defs" $ nf (forceBinaryParse . decodeOrganIR) bin1000
+            , bench "deep-50" $ nf (forceBinaryParse . decodeOrganIR) binDeep
+            ]
+        , bgroup
+            "binary-roundtrip"
+            [ bench "10 defs" $ nf binaryRoundtrip mod10
+            , bench "100 defs" $ nf binaryRoundtrip mod100
+            , bench "1000 defs" $ nf binaryRoundtrip mod1000
             ]
         ]

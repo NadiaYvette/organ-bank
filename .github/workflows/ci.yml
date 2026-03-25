@@ -61,6 +61,19 @@ jobs:
           CABAL: cabal
         run: bash test/integration-test.sh
 
+      - name: Run E2E tests (optional, requires frankenstein)
+        if: always()
+        continue-on-error: true
+        env:
+          CABAL: cabal
+          FRANKENSTEIN_DIR: ${{ github.workspace }}/../frankenstein
+        run: |
+          if [ -d "$FRANKENSTEIN_DIR" ]; then
+            bash test/e2e-test.sh
+          else
+            echo "Frankenstein source not available -- skipping E2E tests"
+          fi
+
       - name: Generate Haddock documentation
         run: cabal haddock organ-ir --haddock-html --haddock-hyperlink-source
 

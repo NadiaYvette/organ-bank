@@ -17,11 +17,14 @@ library
     ErlangFrontend.Lexer
     ErlangFrontend.AST
     ErlangFrontend.Parser
+    ErlangFrontend.Infer
+    ErlangFrontend.Infer.Types
     ErlangFrontend.ToOrganIR
   build-depends:
     base >= 4.20 && < 5,
     text,
     containers,
+    transformers,
     organ-ir
   ghc-options: -Wall
 

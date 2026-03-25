@@ -16,7 +16,7 @@ bug-reports:   https://github.com/NadiaYvette/organ-bank/issues
 category:      Compiler, Language
 tested-with:   GHC == 9.14.1, GHC == 9.15.20260305
 build-type:    Simple
-extra-doc-files: ../CHANGELOG.md
+extra-doc-files: CHANGELOG.md
 
 library
   default-language: GHC2024
@@ -27,12 +27,14 @@ library
     OrganIR.Build
     OrganIR.Json
     OrganIR.Parse
+    OrganIR.Binary
     OrganIR.Schema
     OrganIR.Validate
     OrganIR.Pretty
     OrganIR.Transform
   build-depends:
     base >= 4.20 && < 5,
+    bytestring,
     containers,
     text
   ghc-options: -Wall
@@ -44,6 +46,7 @@ executable organ-validate
   main-is: Validate.hs
   build-depends:
     base >= 4.20 && < 5,
+    bytestring,
     text,
     organ-ir
   ghc-options: -Wall
@@ -81,6 +84,7 @@ benchmark bench
   main-is: Bench.hs
   build-depends:
     base >= 4.20 && < 5,
+    bytestring,
     text,
     organ-ir,
     tasty-bench
@@ -131,6 +135,19 @@ test-suite large-file
   main-is: LargeFile.hs
   build-depends:
     base >= 4.20 && < 5,
+    text,
+    organ-ir
+  ghc-options: -Wall
+
+test-suite binary-roundtrip
+  type: exitcode-stdio-1.0
+  default-language: GHC2024
+  default-extensions: OverloadedStrings
+  hs-source-dirs: test
+  main-is: BinaryRoundTrip.hs
+  build-depends:
+    base >= 4.20 && < 5,
+    bytestring,
     text,
     organ-ir
   ghc-options: -Wall

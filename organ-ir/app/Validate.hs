@@ -1,7 +1,10 @@
 module Main (main) where
 
+import Data.ByteString qualified as BS
 import Data.Text qualified as T
 import Data.Text.IO qualified as TIO
+import OrganIR.Binary (decodeOrganIR)
+import OrganIR.Json (renderOrganIR)
 import OrganIR.Parse (parseJSON, parseOrganIR)
 import OrganIR.Pretty (ppOrganIR)
 import OrganIR.Schema (SchemaError (..), schemaCheck)
@@ -16,15 +19,44 @@ main = do
     let (flags, files) = partition' isFlag args
         pretty = "--pretty" `elem` flags
         schema = "--schema" `elem` flags
-    input <- case files of
-        [] -> TIO.getContents
-        [f] -> TIO.readFile f
-        _ -> do
-            hPutStrLn stderr "Usage: organ-validate [--pretty] [--schema] [file.json]"
-            exitFailure
-    if schema
-        then runSchemaCheck input
-        else runValidate pretty input
+        binary = "--binary" `elem` flags
+    if binary
+        then do
+            input <- case files of
+                [] -> BS.getContents
+                [f] -> BS.readFile f
+                _ -> do
+                    hPutStrLn stderr "Usage: organ-validate [--pretty] [--schema] [--binary] [file]"
+                    exitFailure
+            runBinaryValidate pretty input
+        else do
+            input <- case files of
+                [] -> TIO.getContents
+                [f] -> TIO.readFile f
+                _ -> do
+                    hPutStrLn stderr "Usage: organ-validate [--pretty] [--schema] [--binary] [file.json]"
+                    exitFailure
+            if schema
+                then runSchemaCheck input
+                else runValidate pretty input
+
+runBinaryValidate :: Bool -> BS.ByteString -> IO ()
+runBinaryValidate pretty input = case decodeOrganIR input of
+    Left err -> do
+        hPutStrLn stderr $ "Binary decode error: " ++ err
+        exitFailure
+    Right ir -> do
+        -- Output the JSON representation
+        let json = renderOrganIR ir
+        TIO.putStr json
+        TIO.putStr "\n"
+        -- Validate
+        let ws = validateOrganIR ir
+        when pretty (TIO.putStr (ppOrganIR ir))
+        mapM_ (hPutStrLn stderr . fmtWarning) ws
+        if any (\w -> wSeverity w == Error) ws
+            then exitFailure
+            else exitSuccess
 
 runSchemaCheck :: T.Text -> IO ()
 runSchemaCheck input = case parseJSON input of
