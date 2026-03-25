@@ -1,0 +1,6 @@
+# HLint configuration for organ-bank
+# https://github.com/ndmitchell/hlint
+
+- ignore: {name: "Use newtype instead of data"}
+- ignore: {name: "Redundant bracket"}
+- ignore: {name: "Use <$>"}

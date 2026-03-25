@@ -1,0 +1,29 @@
+cabal-version: 3.0
+name:          organ-extract
+version:       0.1.0
+synopsis:      Unified CLI dispatcher for organ-bank language shims
+description:
+  Auto-detects source language from file extension and invokes
+  the appropriate organ-bank shim or frontend executable.
+  Optionally pipes output through organ-validate.
+license:       GPL-2.0-only
+license-file:  ../LICENSE
+author:        Nadia Yvette Chambers
+maintainer:    nadia@nadiayvette.com
+homepage:      https://github.com/NadiaYvette/organ-bank
+bug-reports:   https://github.com/NadiaYvette/organ-bank/issues
+category:      Compiler, Language
+tested-with:   GHC == 9.14.1, GHC == 9.15.20260305
+build-type:    Simple
+
+executable organ-extract
+  default-language: GHC2024
+  default-extensions: OverloadedStrings
+  hs-source-dirs: src
+  main-is: Main.hs
+  build-depends:
+    base >= 4.20 && < 5,
+    text,
+    process,
+    filepath
+  ghc-options: -Wall

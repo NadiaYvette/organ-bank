@@ -9,8 +9,10 @@ and post-optimisation structure.
 -}
 module OrganBank.FSharpShim (
     extractOrganIR,
+    parseFSharpExpr,
 ) where
 
+import Control.Exception (SomeException, catch)
 import Data.Char (isAlphaNum, isAsciiLower, isDigit, isSpace)
 import Data.List (isPrefixOf, isSuffixOf, stripPrefix, unsnoc)
 import Data.Maybe (fromMaybe)
@@ -27,9 +29,19 @@ import System.Process (readProcessWithExitCode)
 -- Public API
 -- ---------------------------------------------------------------------------
 
+-- | Detect dotnet version by running @dotnet --version@.
+detectCompilerVersion :: IO Text
+detectCompilerVersion = do
+    (ec, out, _) <- readProcessWithExitCode "dotnet" ["--version"] ""
+    pure $ case ec of
+        ExitSuccess -> "fsharp-shim-0.1 (dotnet " <> T.strip (T.pack out) <> ")"
+        _ -> "fsharp-shim-0.1"
+  `catch` \(_ :: SomeException) -> pure "fsharp-shim-0.1"
+
 -- | Extract F# typed AST from a @.fsx@ or @.fs@ file and return OrganIR JSON.
 extractOrganIR :: FilePath -> IO (Either String Text)
 extractOrganIR inputPath = do
+    shimVer <- detectCompilerVersion
     let ext = takeExtension inputPath
         args = case ext of
             ".fsx" -> ["--typedtree", "--typedtreetypes", inputPath]
@@ -37,19 +49,19 @@ extractOrganIR inputPath = do
     (exitCode, _stdout, stderr_) <-
         readProcessWithExitCode "dotnet" ("fsi" : args) ""
     case exitCode of
-        ExitSuccess -> processOutput inputPath stderr_
+        ExitSuccess -> processOutput shimVer inputPath stderr_
         ExitFailure _ ->
             -- F# sometimes exits non-zero but still dumps the tree
             if hasPassEnd stderr_
-                then processOutput inputPath stderr_
+                then processOutput shimVer inputPath stderr_
                 else pure (Left $ "dotnet fsi failed:\n" <> stderr_)
 
-processOutput :: FilePath -> String -> IO (Either String Text)
-processOutput inputPath stderr_ = do
+processOutput :: Text -> FilePath -> String -> IO (Either String Text)
+processOutput shimVer inputPath stderr_ = do
     let modName = capitalise (takeBaseName inputPath)
         passEnd = extractPassEnd stderr_
         defs = parseTypedTree passEnd
-        json = emitOrganIR modName inputPath defs
+        json = emitOrganIR shimVer modName inputPath defs
     pure (Right json)
 
 hasPassEnd :: String -> Bool
@@ -468,13 +480,280 @@ unquoteStr ('"' : rest) = case reverse rest of
 unquoteStr s = s
 
 -- ---------------------------------------------------------------------------
+-- Text-level F# expression parser
+-- ---------------------------------------------------------------------------
+
+{- | Parse F# expression text into an OrganIR Expr.
+
+Handles:
+  - @let name args = body@ (function definitions)
+  - @if cond then thenE else elseE@
+  - @match scrut with | pat -> body@
+  - Function applications @f x y@
+  - Integer and string literals
+
+Falls back to @eApp (eVar "fsharp") [eString rawText]@ for unparsed forms.
+-}
+parseFSharpExpr :: Text -> IR.Expr
+parseFSharpExpr raw =
+    let txt = T.strip raw
+     in if T.null txt
+            then IR.eString ""
+            else parseFSharpInner txt
+
+parseFSharpInner :: Text -> IR.Expr
+parseFSharpInner txt
+    -- Empty
+    | T.null txt = IR.eString ""
+    -- Integer literal
+    | Just n <- readFSharpInt txt = IR.eInt n
+    -- String literal
+    | T.isPrefixOf "\"" txt =
+        IR.eString (T.dropAround (== '"') txt)
+    -- Boolean literals
+    | txt == "true" = IR.eBool True
+    | txt == "false" = IR.eBool False
+    -- Unit
+    | txt == "()" = IR.eNil
+    -- Let binding: let name [args] = body in rest
+    | Just rest <- T.stripPrefix "let " txt =
+        parseFSharpLet rest
+    -- If-then-else
+    | Just rest <- T.stripPrefix "if " txt =
+        parseFSharpIf rest
+    -- Match expression
+    | Just rest <- T.stripPrefix "match " txt =
+        parseFSharpMatch rest
+    -- Fun/lambda: fun x -> body
+    | Just rest <- T.stripPrefix "fun " txt =
+        parseFSharpFun rest
+    -- Parenthesised expression
+    | T.isPrefixOf "(" txt, T.isSuffixOf ")" txt =
+        let inner = T.strip (T.drop 1 (T.dropEnd 1 txt))
+         in if T.null inner
+                then IR.eNil
+                else parseFSharpInner inner
+    -- Simple variable (single word)
+    | not (T.any (== ' ') txt), isFSharpName txt =
+        IR.eVar txt
+    -- Application: f arg1 arg2 ...
+    | (f, rest) <- T.break (== ' ') txt
+    , not (T.null rest)
+    , isFSharpName f =
+        let args = splitFSharpTokens (T.strip rest)
+         in IR.EApp (IR.eVar f) (map parseFSharpInner args)
+    -- Fallback
+    | otherwise = fsharpFallback txt
+
+-- | Parse a let expression: @name [args] = body [in rest]@
+parseFSharpLet :: Text -> IR.Expr
+parseFSharpLet rest =
+    let -- Check for "rec"
+        rest' = fromMaybe rest (T.stripPrefix "rec " rest)
+        -- Split at "=" (first top-level occurrence)
+        (beforeEq, afterEq) = splitFSharpAtEq rest'
+        -- Parse name and optional parameters from beforeEq
+        nameAndParams = T.words (T.strip beforeEq)
+     in case nameAndParams of
+            [] -> fsharpFallback ("let " <> rest)
+            (n : params) ->
+                let -- Split body at "in" keyword
+                    (bodyText, inRest) = splitFSharpAtIn (T.strip afterEq)
+                    bodyExpr =
+                        if null params
+                            then parseFSharpInner (T.strip bodyText)
+                            else
+                                IR.ELam
+                                    (map (\p -> IR.LamParam (IR.name p) Nothing) params)
+                                    (parseFSharpInner (T.strip bodyText))
+                    continuation = T.strip inRest
+                 in if T.null continuation
+                        then IR.ELet [IR.LetBind (IR.name n) Nothing bodyExpr] (IR.eVar n)
+                        else IR.ELet [IR.LetBind (IR.name n) Nothing bodyExpr] (parseFSharpInner continuation)
+
+-- | Parse if-then-else: @cond then thenE else elseE@
+parseFSharpIf :: Text -> IR.Expr
+parseFSharpIf rest =
+    let (condText, afterThen) = splitFSharpKeyword "then" rest
+        (thenText, elseText) = splitFSharpKeyword "else" afterThen
+     in IR.eIf
+            (parseFSharpInner (T.strip condText))
+            (parseFSharpInner (T.strip thenText))
+            (if T.null (T.strip elseText) then IR.eNil else parseFSharpInner (T.strip elseText))
+
+-- | Parse match expression: @scrut with | pat1 -> body1 | pat2 -> body2@
+parseFSharpMatch :: Text -> IR.Expr
+parseFSharpMatch rest =
+    let (scrutText, afterWith) = splitFSharpKeyword "with" rest
+        scrut = parseFSharpInner (T.strip scrutText)
+        -- Split alternatives on "|"
+        altsText = T.strip afterWith
+        altTexts = splitFSharpAlts altsText
+        branches = map parseFSharpAlt altTexts
+     in IR.ECase scrut branches
+
+-- | Parse a single match alternative: @pat -> body@
+parseFSharpAlt :: Text -> IR.Branch
+parseFSharpAlt alt =
+    let trimmed = T.strip alt
+        (patText, bodyText) = splitFSharpArrow trimmed
+        pat = T.strip patText
+        body = parseFSharpInner (T.strip bodyText)
+     in if pat == "_"
+            then IR.Branch IR.PatWild body
+            else case T.words pat of
+                [] -> IR.Branch IR.PatWild body
+                [v] -> IR.Branch (IR.PatVar (IR.name v) Nothing) body
+                (c : bs) ->
+                    IR.Branch
+                        (IR.PatCon (IR.localName c) (map (\b -> IR.PatBinder (IR.name b) Nothing) bs))
+                        body
+
+-- | Parse a lambda: @x [y ...] -> body@
+parseFSharpFun :: Text -> IR.Expr
+parseFSharpFun rest =
+    let (paramText, bodyText) = splitFSharpArrow rest
+     in if T.null bodyText
+            then fsharpFallback ("fun " <> rest)
+            else
+                let params = T.words (T.strip paramText)
+                 in IR.ELam
+                        (map (\p -> IR.LamParam (IR.name p) Nothing) params)
+                        (parseFSharpInner (T.strip bodyText))
+
+-- | Split on " -> " at depth 0.
+splitFSharpArrow :: Text -> (Text, Text)
+splitFSharpArrow = goFSArrow 0 T.empty
+  where
+    goFSArrow :: Int -> Text -> Text -> (Text, Text)
+    goFSArrow _ acc t | T.null t = (acc, T.empty)
+    goFSArrow depth acc t
+        | depth == 0, Just rest <- T.stripPrefix "->" t =
+            (acc, T.strip rest)
+        | otherwise =
+            let c = T.head t
+                rest = T.tail t
+                depth' = case c of
+                    '(' -> depth + 1
+                    ')' -> max 0 (depth - 1)
+                    _ -> depth
+             in goFSArrow depth' (T.snoc acc c) rest
+
+-- | Split at a keyword (e.g. "then", "else", "with", "in") at depth 0.
+splitFSharpKeyword :: Text -> Text -> (Text, Text)
+splitFSharpKeyword kw = goFSKW 0 T.empty
+  where
+    goFSKW :: Int -> Text -> Text -> (Text, Text)
+    goFSKW _ acc t | T.null t = (acc, T.empty)
+    goFSKW depth acc t
+        | depth == 0
+        , Just rest <- T.stripPrefix kw t
+        , kwBoundary rest =
+            (acc, T.strip rest)
+        | otherwise =
+            let c = T.head t
+                rest = T.tail t
+                depth' = case c of
+                    '(' -> depth + 1
+                    ')' -> max 0 (depth - 1)
+                    _ -> depth
+             in goFSKW depth' (T.snoc acc c) rest
+    kwBoundary t = T.null t || case T.head t of
+        c -> c == ' ' || c == '\n' || c == '\t' || c == '('
+
+-- | Split at "=" (first at depth 0).
+splitFSharpAtEq :: Text -> (Text, Text)
+splitFSharpAtEq = goFSEq 0 T.empty
+  where
+    goFSEq :: Int -> Text -> Text -> (Text, Text)
+    goFSEq _ acc t | T.null t = (acc, T.empty)
+    goFSEq depth acc t
+        | depth == 0, T.head t == '=' =
+            (acc, T.tail t)
+        | otherwise =
+            let c = T.head t
+                rest = T.tail t
+                depth' = case c of
+                    '(' -> depth + 1
+                    ')' -> max 0 (depth - 1)
+                    _ -> depth
+             in goFSEq depth' (T.snoc acc c) rest
+
+-- | Split at " in " keyword at depth 0.
+splitFSharpAtIn :: Text -> (Text, Text)
+splitFSharpAtIn = splitFSharpKeyword "in"
+
+-- | Split match alternatives on "|" at depth 0.
+splitFSharpAlts :: Text -> [Text]
+splitFSharpAlts txt =
+    let -- Strip leading "|" if present
+        txt' = case T.stripPrefix "|" (T.stripStart txt) of
+            Just r -> r
+            Nothing -> txt
+     in goFSAlts 0 T.empty [] txt'
+  where
+    goFSAlts :: Int -> Text -> [Text] -> Text -> [Text]
+    goFSAlts _ cur acc t | T.null t =
+        let cur' = T.strip cur
+         in reverse (if T.null cur' then acc else cur' : acc)
+    goFSAlts depth cur acc t =
+        let c = T.head t
+            rest = T.tail t
+         in case c of
+                '(' -> goFSAlts (depth + 1) (T.snoc cur c) acc rest
+                ')' -> goFSAlts (max 0 (depth - 1)) (T.snoc cur c) acc rest
+                '|'
+                    | depth == 0 ->
+                        let cur' = T.strip cur
+                         in goFSAlts 0 T.empty (if T.null cur' then acc else cur' : acc) rest
+                _ -> goFSAlts depth (T.snoc cur c) acc rest
+
+-- | Split text into tokens respecting parentheses.
+splitFSharpTokens :: Text -> [Text]
+splitFSharpTokens = goFSTok 0 T.empty []
+  where
+    goFSTok :: Int -> Text -> [Text] -> Text -> [Text]
+    goFSTok _ cur acc t | T.null t =
+        let cur' = T.strip cur
+         in reverse (if T.null cur' then acc else cur' : acc)
+    goFSTok depth cur acc t =
+        let c = T.head t
+            rest = T.tail t
+         in case c of
+                '(' -> goFSTok (depth + 1) (T.snoc cur c) acc rest
+                ')' -> goFSTok (max 0 (depth - 1)) (T.snoc cur c) acc rest
+                ' '
+                    | depth == 0 ->
+                        let cur' = T.strip cur
+                         in if T.null cur'
+                                then goFSTok 0 T.empty acc rest
+                                else goFSTok 0 T.empty (cur' : acc) rest
+                _ -> goFSTok depth (T.snoc cur c) acc rest
+
+-- | Check if text looks like a valid F# name.
+isFSharpName :: Text -> Bool
+isFSharpName txt =
+    not (T.null txt)
+        && T.all (\c -> isAlphaNum c || c == '_' || c == '\'' || c == '.') txt
+
+-- | Try to read an integer from text.
+readFSharpInt :: Text -> Maybe Integer
+readFSharpInt txt = case reads (T.unpack txt) of
+    [(n, "")] -> Just n
+    _ -> Nothing
+
+-- | Fallback: wrap unparsed text.
+fsharpFallback :: Text -> IR.Expr
+fsharpFallback raw = IR.EApp (IR.eVar "fsharp") [IR.eString raw]
+
+-- ---------------------------------------------------------------------------
 -- OrganIR emission via organ-ir library
 -- ---------------------------------------------------------------------------
 
-emitOrganIR :: String -> FilePath -> [FSDef] -> Text
-emitOrganIR modName srcFile defs =
+emitOrganIR :: Text -> String -> FilePath -> [FSDef] -> Text
+emitOrganIR shimVer modName srcFile defs =
     let metadata =
-            IR.Metadata IR.LFSharp Nothing (Just (T.pack srcFile)) "fsharp-shim-0.1" Nothing
+            IR.Metadata IR.LFSharp Nothing (Just (T.pack srcFile)) shimVer Nothing
         exports = map (T.pack . fdName) defs
         irDefs = zipWith (translateDef (T.pack modName)) [0 ..] defs
         module_ =

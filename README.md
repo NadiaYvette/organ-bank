@@ -19,32 +19,6 @@ Organ Bank is the harvesting facility: it extracts the typed, analyzed IR
 from each compiler's guts and packages it in a uniform format that
 Frankenstein's MLIR backend can consume.
 
-The organs:
-
-- **ghc-shim** -- GHC Core with demand/strictness annotations
-- **rustc-shim** -- MIR with ownership and borrow information
-- **mmc-shim** -- Mercury HLDS with mode/determinism analysis
-- **idris2-shim** -- Idris 2 case trees from `--dumpcases`
-- **lean4-shim** -- Lean 4 LCNF from a real compiler plugin
-- **erlc-shim** -- Core Erlang (covers Erlang + Elixir + Gleam)
-- **purs-shim** -- PureScript CoreFn from `--dump-corefn` (JSON)
-- **ocaml-shim** -- OCaml Lambda IR from `-dlambda`
-- **koka-shim** -- Koka Core from `--showcore`
-- **swift-shim** -- Swift SIL from `-emit-sil`
-- **agda-shim** -- Agda Treeless via MAlonzo backend
-- **fsharp-shim** -- F# Typed Tree from `--typedtree`
-- **scala3-shim** -- Scala 3 post-erasure trees from `-Vprint:erasure`
-- **julia-shim** -- Julia Typed IR via `code_typed()` reflection
-- **zig-shim** -- Zig ZIR via `std.zig.AstGen`
-- **c-shim** -- LLVM IR via `clang -emit-llvm -S`
-- **cpp-shim** -- LLVM IR via `clang++ -emit-llvm -S` (with C++ demangling)
-- **fortran-shim** -- GCC GIMPLE via `gfortran -fdump-tree-optimized`
-- **ada-shim** -- GCC GIMPLE via `gnat compile -fdump-tree-gimple`
-- **sml-shim** -- MLton type basis + source parsing
-- **cl-shim** -- SBCL disassembly via `sb-introspect`
-- **scheme-shim** -- Guile Tree-IL via `compile` API
-- **prolog-shim** -- GNU Prolog WAM bytecode via `gplc -W`
-
 ## Architecture
 
 ```
@@ -83,113 +57,112 @@ OrganIR is a JSON format that captures:
 - **Types**: using a tiered interop type system (see `spec/interop-types.md`)
 - **Effects**: algebraic effect rows from Koka/Mercury, IO effects, exception effects
 - **Exports**: which definitions are visible to other modules
+- **Multiplicity**: affine/linear annotations from ownership systems (Rust, Swift, Mercury)
 
 See `spec/organ-ir-example.json` for a concrete example and
 `spec/organ-ir.schema.json` for the full JSON Schema.
 
+## organ-ir Library
+
+The `organ-ir` Haskell library provides shared types, builders, and tools
+used by all shims. It has no dependencies beyond `base` and `text`.
+
+| Module | Purpose |
+|--------|---------|
+| `OrganIR.Types` | Core data types: `OrganIR`, `Module`, `Definition`, `Expr`, `Ty` (25 source languages, 20+ expression variants) |
+| `OrganIR.Build` | Smart constructors: `simpleOrganIR`, `organIRWithExports`, `funDef`, `valDef`, `localName`, `qualName` |
+| `OrganIR.Json` | `renderOrganIR :: OrganIR -> Text` -- efficient hand-rolled JSON emission (no aeson dependency) |
+| `OrganIR.Parse` | `parseOrganIR :: Text -> Either String OrganIR` -- hand-rolled JSON parser |
+| `OrganIR.Validate` | `validateOrganIR :: OrganIR -> [Warning]` -- structural checks, placeholder detection, arity/type consistency |
+| `OrganIR.Pretty` | `ppOrganIR :: OrganIR -> Text` -- human-readable IR output with indentation, effect rows, data types, effect declarations |
+
+### organ-validate CLI
+
+```bash
+# Validate OrganIR JSON
+organ-validate input.json
+
+# Validate and pretty-print
+organ-validate --pretty input.json
+
+# Pipe from a shim
+ghc-organ Hello.hs | organ-validate --pretty
+```
+
+## Independent Frontends
+
+In addition to compiler shims, Organ Bank includes 6 independent frontends
+written from scratch in Haskell:
+
+| Frontend | Language | Features |
+|----------|----------|----------|
+| sml-frontend | Standard ML | Lexer, parser, Hindley-Milner type inference, pattern match compilation |
+| erlang-frontend | Erlang | Lexer, operator precedence parser, export tracking |
+| scheme-frontend | R7RS Scheme | Lexer, reader, macro desugaring |
+| prolog-frontend | ISO Prolog | Lexer, term reader, clause grouping |
+| lua-frontend | Lua 5.4 | Lexer, recursive-descent parser |
+| forth-frontend | ANS Forth | Word lexer, structured definition parser |
+
 ## Shim Status
 
-| Shim | Language | Compiler IR | Access Method | Status |
-|------|----------|-------------|---------------|--------|
-| ghc-shim | Haskell | GHC Core | GHC API (`runGhc`) | Working |
-| rustc-shim | Rust | MIR | `rustc_private` callbacks | Working |
-| mmc-shim | Mercury | HLDS | `mmc --dump-hlds 50` | Working |
-| idris2-shim | Idris 2 | Case trees | `idris2 --dumpcases` | Working |
-| lean4-shim | Lean 4 | LCNF | Compiler plugin (`baseExt`) | Working |
-| erlc-shim | Erlang | Core Erlang | `erlc +to_core` | Working |
-| purs-shim | PureScript | CoreFn | `purs compile --dump-corefn` | Working |
-| ocaml-shim | OCaml | Lambda | `ocamlopt -dlambda` | Working |
-| koka-shim | Koka | Core | `koka --showcore` | Working |
-| swift-shim | Swift | SIL | `swiftc -emit-sil` | Working |
-| agda-shim | Agda | Treeless | `agda --compile --ghc-dont-call-ghc` | Working |
-| fsharp-shim | F# | Typed Tree | `dotnet fsi --typedtree` | Working |
-| scala3-shim | Scala 3 | Erasure Trees | `scalac -Vprint:erasure` | Working |
-| julia-shim | Julia | Typed IR | `code_typed()` reflection | Working |
-| zig-shim | Zig | ZIR | `std.zig.AstGen` | Working |
-| c-shim | C | LLVM IR | `clang -emit-llvm -S` | Working |
-| cpp-shim | C++ | LLVM IR | `clang++ -emit-llvm -S` | Working |
-| fortran-shim | Fortran | GIMPLE | `gfortran -fdump-tree-optimized` | Working |
-| ada-shim | Ada | GIMPLE | `gnat compile -fdump-tree-gimple` | Working |
-| sml-shim | Standard ML | Type basis | `mlton -show-basis` | Working |
-| cl-shim | Common Lisp | Disassembly | SBCL `sb-introspect` | Working |
-| scheme-shim | Scheme | Tree-IL | Guile `compile` API | Working |
-| prolog-shim | Prolog | WAM | `gplc -W` | Working |
+| Shim | Language | Compiler IR | Expression Translation | Type Translation |
+|------|----------|-------------|----------------------|-----------------|
+| ghc-shim | Haskell | GHC Core | Full (Var, Lit, App, Lam, Let, Case, TypeApp, TypeLam) | Full (ForAllTy, FunTy, TyConApp, dictionary erasure) |
+| rustc-shim | Rust | MIR | Full (basic blocks, statements, terminators via serde_json) | Function signatures via fn_sig |
+| mmc-shim | Mercury | HLDS | HLDS clauses as structured text | Modes with Affine multiplicity |
+| idris2-shim | Idris 2 | Case trees | Case tree text as structured expressions | TAny |
+| lean4-shim | Lean 4 | LCNF | Full (let, fun, join points, cases) | TAny (post-erasure) |
+| erlc-shim | Erlang | Core Erlang | Function clauses with patterns | Pure effect annotation |
+| purs-shim | PureScript | CoreFn | Full (Literal, Var, App, Abs, Let, Case, Constructor) | From CoreFn JSON |
+| ocaml-shim | OCaml | Lambda | Lambda expressions with full translation | OCaml type strings |
+| koka-shim | Koka | Core | Core expressions with effect rows | Koka type strings with namespaced effects |
+| swift-shim | Swift | SIL | SIL basic blocks as structured IR | SIL type strings |
+| agda-shim | Agda | Treeless | Treeless expressions | TAny |
+| fsharp-shim | F# | Typed Tree | Typed tree expressions | F# type strings |
+| scala3-shim | Scala 3 | Erasure Trees | Full expression parsing with fallback | Scala type strings |
+| julia-shim | Julia | Typed IR | Delegated to Julia script | Delegated |
+| zig-shim | Zig | ZIR | Delegated to Zig tool | Untyped (pre-semantic) |
+| c-shim | C | LLVM IR | LLVM IR blocks as structured text | TAny |
+| cpp-shim | C++ | LLVM IR | LLVM IR blocks with C++ demangling | TAny |
+| fortran-shim | Fortran | GIMPLE | GIMPLE blocks as structured text | TAny |
+| ada-shim | Ada | GIMPLE | GIMPLE blocks as structured text | TAny |
+| sml-shim | Standard ML | Type basis | Source parsing with MLton types | MLton type basis |
+| cl-shim | Common Lisp | Disassembly | Delegated to Lisp script (validated) | Delegated |
+| scheme-shim | Scheme | Tree-IL | Delegated to Guile script (validated) | Delegated |
+| prolog-shim | Prolog | WAM | WAM bytecode as structured text | TAny |
 
 ## Building
 
-Each shim has its own build system:
+### All Haskell packages at once
 
 ```bash
-# GHC shim (requires GHC 9.14+)
-cd ghc-shim && cabal build
+# Main project (22 packages, requires GHC 9.14+)
+cabal build all
 
-# Rustc shim (requires nightly + rustc-dev)
+# GHC shim (separate project file, requires GHC 9.14.1)
+cabal --project-file=cabal-ghc914.project build ghc-shim
+
+# Rust shim
 cd rustc-shim && cargo build
 
-# MMC shim (requires mmc on PATH)
-cd mmc-shim && cabal build
-
-# Idris 2 shim (requires idris2 on PATH)
-cd idris2-shim && cabal build
-
-# Lean 4 shim (requires Lean 4.16+)
+# Lean 4 shim
 cd lean4-shim && lake build
 
-# Core Erlang shim (requires erlc on PATH)
-cd erlc-shim && cabal build
-
-# PureScript shim (requires purs on PATH)
-cd purs-shim && cabal build
-
-# OCaml shim (requires ocamlopt on PATH)
-cd ocaml-shim && cabal build
-
-# Koka shim (requires koka on PATH)
-cd koka-shim && cabal build
-
-# Swift shim (requires swiftc on PATH)
-cd swift-shim && cabal build
-
-# Agda shim (requires agda on PATH)
-cd agda-shim && cabal build
-
-# F# shim (requires dotnet SDK)
-cd fsharp-shim && cabal build
-
-# Scala 3 shim (requires scala via Coursier)
-cd scala3-shim && cabal build
-
-# Julia shim (requires julia on PATH)
-cd julia-shim && cabal build
-
-# Zig shim (requires zig on PATH)
-cd zig-shim && cabal build
-# Also build the Zig extraction tool:
+# Zig extraction tool
 cd zig-shim/zig-tool && zig build
+```
 
-# C shim (requires clang/LLVM)
-cd c-shim && cabal build
+### Running tests
 
-# C++ shim (requires clang++)
-cd cpp-shim && cabal build
+```bash
+# Run 114 round-trip tests covering all OrganIR variants
+cabal test all
 
-# Fortran shim (requires gfortran)
-cd fortran-shim && cabal build
+# Run smoke tests (requires compilers on PATH)
+./test/smoke-test.sh
 
-# Ada shim (requires GNAT)
-cd ada-shim && cabal build
-
-# Standard ML shim (requires MLton)
-cd sml-shim && cabal build
-
-# Common Lisp shim (requires SBCL)
-cd cl-shim && cabal build
-
-# Scheme shim (requires Guile 3.0)
-cd scheme-shim && cabal build
-
-# Prolog shim (requires GNU Prolog gplc)
-cd prolog-shim && cabal build
+# Validate a shim's output
+ghc-organ Hello.hs | organ-validate --pretty
 ```
 
 ## Relationship to Frankenstein

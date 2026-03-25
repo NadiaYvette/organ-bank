@@ -8,7 +8,15 @@ description:
   Used by organ-bank frontends and shims to produce OrganIR for
   consumption by the Frankenstein polyglot compiler.
 license:       GPL-2.0-only
+license-file:  LICENSE
+author:        Nadia Yvette Chambers
+maintainer:    nadia@nadiayvette.com
+homepage:      https://github.com/NadiaYvette/organ-bank
+bug-reports:   https://github.com/NadiaYvette/organ-bank/issues
+category:      Compiler, Language
+tested-with:   GHC == 9.14.1, GHC == 9.15.20260305
 build-type:    Simple
+extra-doc-files: ../CHANGELOG.md
 
 library
   default-language: GHC2024
@@ -37,12 +45,37 @@ executable organ-validate
     organ-ir
   ghc-options: -Wall
 
+test-suite property-roundtrip
+  type: exitcode-stdio-1.0
+  default-language: GHC2024
+  default-extensions: OverloadedStrings
+  hs-source-dirs: test
+  main-is: PropertyRoundTrip.hs
+  build-depends:
+    base >= 4.20 && < 5,
+    text,
+    organ-ir,
+    QuickCheck
+  ghc-options: -Wall
+
 test-suite roundtrip
   type: exitcode-stdio-1.0
   default-language: GHC2024
   default-extensions: OverloadedStrings
   hs-source-dirs: test
   main-is: RoundTrip.hs
+  build-depends:
+    base >= 4.20 && < 5,
+    text,
+    organ-ir
+  ghc-options: -Wall
+
+test-suite integration
+  type: exitcode-stdio-1.0
+  default-language: GHC2024
+  default-extensions: OverloadedStrings
+  hs-source-dirs: test
+  main-is: Integration.hs
   build-depends:
     base >= 4.20 && < 5,
     text,

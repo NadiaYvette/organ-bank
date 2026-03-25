@@ -16,6 +16,7 @@ module OrganBank.Idris2Shim (
     extractOrganIR,
 ) where
 
+import Control.Exception (SomeException, catch)
 import Data.Char (isAlphaNum, isSpace)
 import Data.List (isPrefixOf)
 import Data.Text (Text)
@@ -27,9 +28,19 @@ import System.Exit (ExitCode (..))
 import System.FilePath (takeBaseName)
 import System.Process (readProcessWithExitCode)
 
+-- | Detect idris2 version by running @idris2 --version@.
+detectCompilerVersion :: IO Text
+detectCompilerVersion = do
+    (ec, out, _) <- readProcessWithExitCode "idris2" ["--version"] ""
+    pure $ case ec of
+        ExitSuccess | (l : _) <- lines out -> "idris2-shim-0.1 (" <> T.strip (T.pack l) <> ")"
+        _ -> "idris2-shim-0.1"
+  `catch` \(_ :: SomeException) -> pure "idris2-shim-0.1"
+
 -- | Extract Idris 2 case trees from a source file and emit OrganIR JSON.
 extractOrganIR :: FilePath -> IO (Either Text Text)
 extractOrganIR inputPath = do
+    shimVer <- detectCompilerVersion
     let casesFile = "build/exec/" ++ takeBaseName inputPath ++ ".cases"
     -- First compile to get the case trees
     (ec, _stdout, stderrOut) <-
@@ -42,7 +53,7 @@ extractOrganIR inputPath = do
             dump <- readFile casesFile
             let modName = takeBaseName inputPath
                 defs = parseCasesDump dump
-            pure $ Right $ emitOrganIR modName defs
+            pure $ Right $ emitOrganIR shimVer modName defs
         ExitFailure _ -> do
             -- Try alternative: --dump-anf or --dump-lifted
             (ec2, _stdout2, _stderr2) <-
@@ -55,7 +66,7 @@ extractOrganIR inputPath = do
                     dump <- readFile casesFile
                     let modName = takeBaseName inputPath
                         defs = parseCasesDump dump
-                    pure $ Right $ emitOrganIR modName defs
+                    pure $ Right $ emitOrganIR shimVer modName defs
                 ExitFailure _ ->
                     pure $ Left $ T.pack $ "idris2 failed: " ++ stderrOut
 
@@ -136,6 +147,6 @@ defToIR uid def' =
             }
 
 -- | Emit OrganIR JSON from parsed definitions.
-emitOrganIR :: String -> [Idris2Def] -> Text
-emitOrganIR modName defs =
-    renderOrganIR $ IR.organIR IR.LIdris2 "idris2-shim-0.1" (T.pack modName) (zipWith defToIR [1 ..] defs)
+emitOrganIR :: Text -> String -> [Idris2Def] -> Text
+emitOrganIR shimVer modName defs =
+    renderOrganIR $ IR.organIR IR.LIdris2 shimVer (T.pack modName) (zipWith defToIR [1 ..] defs)

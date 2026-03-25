@@ -1,6 +1,7 @@
 -- | Extract GNU Prolog WAM bytecode and emit OrganIR JSON.
 module OrganBank.PrologShim (extractOrganIR) where
 
+import Control.Exception (SomeException, catch)
 import Data.Text (Text)
 import Data.Text qualified as T
 import OrganIR.Build qualified as IR
@@ -10,15 +11,25 @@ import System.Exit (ExitCode (..))
 import System.FilePath (takeBaseName)
 import System.Process (readProcessWithExitCode)
 
+-- | Detect gplc version by running @gplc --version@.
+detectCompilerVersion :: IO Text
+detectCompilerVersion = do
+    (ec, out, _) <- readProcessWithExitCode "gplc" ["--version"] ""
+    pure $ case ec of
+        ExitSuccess | (l : _) <- lines out -> "prolog-shim-0.1 (" <> T.strip (T.pack l) <> ")"
+        _ -> "prolog-shim-0.1"
+  `catch` \(_ :: SomeException) -> pure "prolog-shim-0.1"
+
 extractOrganIR :: FilePath -> IO (Either String Text)
 extractOrganIR inputPath = do
+    shimVer <- detectCompilerVersion
     (ec, out, err) <- readProcessWithExitCode "gplc" ["-W", inputPath] ""
     case ec of
         ExitFailure _ -> pure $ Left $ "gplc failed: " ++ err
         ExitSuccess -> do
             let defs = parseWam (T.pack out)
                 modName = takeBaseName inputPath
-                ir = IR.simpleOrganIR IR.LProlog "prolog-shim-0.1" (T.pack modName) inputPath (map toIRDef defs)
+                ir = IR.simpleOrganIR IR.LProlog shimVer (T.pack modName) inputPath (map toIRDef defs)
             pure $ Right $ renderOrganIR ir
 
 toIRDef :: WamPred -> IR.Definition

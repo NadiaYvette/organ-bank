@@ -1,6 +1,7 @@
 -- | Extract LLVM IR from C source via clang and emit OrganIR JSON.
 module OrganBank.CShim (extractOrganIR) where
 
+import Control.Exception (SomeException, catch)
 import Data.Text (Text)
 import Data.Text qualified as T
 import OrganIR.Build qualified as IR
@@ -10,8 +11,18 @@ import System.Exit (ExitCode (..))
 import System.FilePath (takeBaseName)
 import System.Process (readProcessWithExitCode)
 
+-- | Detect clang version by running @clang --version@.
+detectCompilerVersion :: IO Text
+detectCompilerVersion = do
+    (ec, out, _) <- readProcessWithExitCode "clang" ["--version"] ""
+    pure $ case ec of
+        ExitSuccess | (l : _) <- lines out -> "c-shim-0.1 (" <> T.strip (T.pack l) <> ")"
+        _ -> "c-shim-0.1"
+  `catch` \(_ :: SomeException) -> pure "c-shim-0.1"
+
 extractOrganIR :: FilePath -> IO (Either String Text)
 extractOrganIR inputPath = do
+    shimVer <- detectCompilerVersion
     (ec, out, err) <-
         readProcessWithExitCode
             "clang"
@@ -24,8 +35,27 @@ extractOrganIR inputPath = do
                 modName = takeBaseName inputPath
                 json =
                     renderOrganIR $
-                        IR.simpleOrganIR IR.LC "c-shim-0.1" (T.pack modName) inputPath (map funcToIR defs)
+                        IR.simpleOrganIR IR.LC shimVer (T.pack modName) inputPath (map funcToIR defs)
             pure $ Right json
+
+-- | Map an LLVM IR type string to an OrganIR type.
+llvmTypeToIR :: Text -> IR.Ty
+llvmTypeToIR t = case T.strip t of
+    "i1" -> IR.tCon "Bool"
+    "i8" -> IR.tCon "Int8"
+    "i16" -> IR.tCon "Int16"
+    "i32" -> IR.tCon "Int32"
+    "i64" -> IR.tCon "Int64"
+    "i128" -> IR.tCon "Int128"
+    "float" -> IR.tCon "Float32"
+    "double" -> IR.tCon "Float64"
+    "void" -> IR.tCon "Void"
+    s
+        | "ptr" == s || "*" `T.isSuffixOf` s -> IR.tCon "Ptr"
+        | "<" `T.isPrefixOf` s && ">" `T.isSuffixOf` s -> IR.tCon "Vec"
+        | "[" `T.isPrefixOf` s -> IR.tCon "Array"
+        | "{" `T.isPrefixOf` s -> IR.tCon "Struct"
+        | otherwise -> IR.tCon s
 
 -- | Convert an LlvmFunc to an OrganIR Definition.
 funcToIR :: LlvmFunc -> IR.Definition
@@ -34,9 +64,9 @@ funcToIR f =
         { IR.defName = IR.localName (lfName f)
         , IR.defType =
             IR.TFn
-                (map (\(ty, _) -> IR.FnArg Nothing (IR.tCon ty)) (lfParams f))
+                (map (\(ty, _) -> IR.FnArg Nothing (llvmTypeToIR ty)) (lfParams f))
                 IR.pureEffect
-                (IR.tCon (lfRetTy f))
+                (llvmTypeToIR (lfRetTy f))
         , IR.defExpr =
             IR.EApp (IR.eVar "ssa_body") (map blockToIR (lfBlocks f))
         , IR.defSort = IR.SFun

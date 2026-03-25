@@ -13,6 +13,7 @@ module OrganBank.Scala3Shim (
     extractOrganIR,
 ) where
 
+import Control.Exception (SomeException, catch)
 import Data.Char (isAlphaNum, isDigit, isSpace)
 import Data.Text (Text)
 import Data.Text qualified as T
@@ -76,8 +77,18 @@ scalaBin = "/home/nyc/.local/share/coursier/bin/scala"
 Note: @scala compile -Vprint:erasure@ emits the tree dump on stderr,
 not stdout. We read stderr for the tree output.
 -}
+-- | Detect scala-cli version by running @scala-cli version@.
+detectCompilerVersion :: IO Text
+detectCompilerVersion = do
+    (ec, out, _) <- readProcessWithExitCode "scala-cli" ["version"] ""
+    pure $ case ec of
+        ExitSuccess | (l : _) <- lines out -> "scala3-shim-0.1 (" <> T.strip (T.pack l) <> ")"
+        _ -> "scala3-shim-0.1"
+  `catch` \(_ :: SomeException) -> pure "scala3-shim-0.1"
+
 extractOrganIR :: FilePath -> IO (Either Text Text)
 extractOrganIR inputPath = do
+    shimVer <- detectCompilerVersion
     (exitCode, _stdoutText, stderrText) <-
         readProcessWithExitCode
             scalaBin
@@ -90,7 +101,7 @@ extractOrganIR inputPath = do
             | hasTree -> do
                 let modName = takeBaseName inputPath
                     classes = parseErasureOutput cleaned
-                pure $ Right $ emitOrganIR modName inputPath classes
+                pure $ Right $ emitOrganIR shimVer modName inputPath classes
             | otherwise ->
                 pure $ Left "scala compile succeeded but no erasure tree in output"
         ExitFailure code ->
@@ -99,7 +110,7 @@ extractOrganIR inputPath = do
                 then do
                     let modName = takeBaseName inputPath
                         classes = parseErasureOutput cleaned
-                    pure $ Right $ emitOrganIR modName inputPath classes
+                    pure $ Right $ emitOrganIR shimVer modName inputPath classes
                 else
                     pure $
                         Left $
@@ -826,13 +837,13 @@ parseCallExpr t =
 -- ---------------------------------------------------------------------------
 
 -- | Emit the parsed Scala classes as OrganIR JSON.
-emitOrganIR :: String -> FilePath -> [ScalaClass] -> Text
-emitOrganIR modName srcFile classes =
+emitOrganIR :: Text -> String -> FilePath -> [ScalaClass] -> Text
+emitOrganIR shimVer modName srcFile classes =
     let allDefs = concatMap scDefs classes
         userDefs = filter (not . isCompilerGenerated) allDefs
         irDefs = zipWith (defToIR (T.pack modName)) [1 ..] userDefs
      in renderOrganIR $
-            IR.simpleOrganIR IR.LScala3 "scala3-shim-0.1" (T.pack modName) srcFile irDefs
+            IR.simpleOrganIR IR.LScala3 shimVer (T.pack modName) srcFile irDefs
 
 -- | Check if a definition is compiler-generated boilerplate.
 isCompilerGenerated :: ScalaDef -> Bool

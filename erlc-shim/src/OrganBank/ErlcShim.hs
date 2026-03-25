@@ -15,6 +15,7 @@ module OrganBank.ErlcShim (
     extractOrganIR,
 ) where
 
+import Control.Exception (SomeException, catch)
 import Control.Exception qualified
 import Data.Char (isSpace)
 import Data.Text (Text)
@@ -38,9 +39,21 @@ data CoreFun = CoreFun
     }
     deriving (Show)
 
+-- | Detect erlc version by running @erlc -v@ (prints to stderr).
+detectCompilerVersion :: IO Text
+detectCompilerVersion = do
+    (ec, _out, err) <- readProcessWithExitCode "erlc" ["-v"] ""
+    pure $ case ec of
+        _ | not (null (trim err)) -> "erlc-shim-0.1 (" <> T.strip (T.pack (head (lines err))) <> ")"
+        _ -> "erlc-shim-0.1"
+  `catch` \(_ :: SomeException) -> pure "erlc-shim-0.1"
+  where
+    trim = reverse . dropWhile isSpace . reverse . dropWhile isSpace
+
 -- | Extract Core Erlang from a source file and emit OrganIR JSON.
 extractOrganIR :: FilePath -> IO (Either Text Text)
 extractOrganIR inputPath = do
+    shimVer <- detectCompilerVersion
     -- Run erlc +to_core which produces <basename>.core in current dir
     (ec, _stdout, stderrOut) <-
         readProcessWithExitCode
@@ -62,7 +75,7 @@ extractOrganIR inputPath = do
                         funs = parseCoreErlang content
                         defs = map coreFunToDef funs
                         exports = map (T.pack . cfName) funs
-                        ir = IR.organIRWithExports IR.LErlang "erlc-shim-0.1" (T.pack modName) inputPath exports defs
+                        ir = IR.organIRWithExports IR.LErlang shimVer (T.pack modName) inputPath exports defs
                     pure $ Right $ renderOrganIR ir
 
 tryReadFile :: FilePath -> IO (Maybe String)

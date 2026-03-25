@@ -2,14 +2,16 @@ module OrganBank.KokaShim (
     extractOrganIR,
 ) where
 
+import Control.Exception (SomeException, catch)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
 import OrganIR.Build qualified as IR
 import OrganIR.Json (renderOrganIR)
 import OrganIR.Types qualified as IR
+import System.Exit (ExitCode (..))
 import System.FilePath (takeBaseName)
-import System.Process (readProcess)
+import System.Process (readProcess, readProcessWithExitCode)
 
 ------------------------------------------------------------------------
 -- OrganIR types
@@ -34,13 +36,23 @@ data OrganModule = OrganModule
 -- Public entry point
 ------------------------------------------------------------------------
 
+-- | Detect koka version by running @koka --version@.
+detectCompilerVersion :: IO Text
+detectCompilerVersion = do
+    (ec, out, _) <- readProcessWithExitCode "koka" ["--version"] ""
+    pure $ case ec of
+        ExitSuccess | (l : _) <- lines out -> "koka-shim-0.1 (" <> T.strip (T.pack l) <> ")"
+        _ -> "koka-shim-0.1"
+  `catch` \(_ :: SomeException) -> pure "koka-shim-0.1"
+
 -- | Run koka --showcore on a .kk file and return OrganIR JSON.
 extractOrganIR :: FilePath -> IO Text
 extractOrganIR kkFile = do
+    shimVer <- detectCompilerVersion
     raw <- readProcess "koka" ["--showcore", kkFile] ""
     let coreText = T.pack raw
         modul = parseCoreOutput (T.pack (takeBaseName kkFile)) coreText
-    pure (renderOrganIR (moduleToIR modul))
+    pure (renderOrganIR (moduleToIR shimVer modul))
 
 ------------------------------------------------------------------------
 -- Parsing Koka Core text
@@ -330,12 +342,12 @@ mapType t = case T.strip t of
 -- OrganIR conversion
 ------------------------------------------------------------------------
 
-moduleToIR :: OrganModule -> IR.OrganIR
-moduleToIR m =
+moduleToIR :: Text -> OrganModule -> IR.OrganIR
+moduleToIR shimVer m =
     let defs = map defToIR (omDefs m)
         exports = map odName (omDefs m)
     in  IR.OrganIR
-            { IR.irMetadata = IR.Metadata IR.LKoka Nothing Nothing "koka-shim-0.1" Nothing
+            { IR.irMetadata = IR.Metadata IR.LKoka Nothing Nothing shimVer Nothing
             , IR.irModule = IR.Module (omName m) exports defs [] []
             }
 

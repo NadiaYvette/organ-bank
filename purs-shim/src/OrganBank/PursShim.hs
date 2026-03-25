@@ -9,6 +9,7 @@ module OrganBank.PursShim (
     extractOrganIR,
 ) where
 
+import Control.Exception (SomeException, catch)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Text.IO qualified as TIO
@@ -20,9 +21,19 @@ import System.Exit (ExitCode (..))
 import System.FilePath (takeBaseName)
 import System.Process (readProcessWithExitCode)
 
+-- | Detect purs version by running @purs --version@.
+detectCompilerVersion :: IO Text
+detectCompilerVersion = do
+    (ec, out, _) <- readProcessWithExitCode "purs" ["--version"] ""
+    pure $ case ec of
+        ExitSuccess -> "purs-shim-0.1 (purs " <> T.strip (T.pack out) <> ")"
+        _ -> "purs-shim-0.1"
+  `catch` \(_ :: SomeException) -> pure "purs-shim-0.1"
+
 -- | Extract PureScript CoreFn from a .purs file and emit OrganIR JSON.
 extractOrganIR :: FilePath -> IO (Either String Text)
 extractOrganIR inputPath = do
+    shimVer <- detectCompilerVersion
     -- Step 1: Run purs compile --dump-corefn
     (exitCode, _stdout, stderrOut) <-
         readProcessWithExitCode "purs" ["compile", "--dump-corefn", inputPath] ""
@@ -40,7 +51,7 @@ extractOrganIR inputPath = do
                 Just coreFnPath -> do
                     -- Step 3: Read and parse the CoreFn JSON
                     coreFnText <- TIO.readFile coreFnPath
-                    let organIR = coreFnToOrganIR inputPath coreFnText
+                    let organIR = coreFnToOrganIR shimVer inputPath coreFnText
                     pure $ Right organIR
 
 {- | Find the corefn.json file produced by purs compile.
@@ -66,8 +77,8 @@ findCoreFnJson inputPath = do
         if exists then pure (Just p) else findFirst ds
 
 -- | Transform CoreFn JSON text to OrganIR JSON.
-coreFnToOrganIR :: FilePath -> Text -> Text
-coreFnToOrganIR sourceFile coreFnText =
+coreFnToOrganIR :: Text -> FilePath -> Text -> Text
+coreFnToOrganIR shimVer sourceFile coreFnText =
     let modName_ = extractJsonString "moduleName" coreFnText
         exports = extractJsonStringArray "exports" coreFnText
         decls = extractDecls coreFnText
@@ -76,7 +87,7 @@ coreFnToOrganIR sourceFile coreFnText =
                 IR.LPurescript
                 Nothing
                 (Just (T.pack sourceFile))
-                "purs-shim-0.1"
+                shimVer
                 Nothing
         module_ =
             IR.Module

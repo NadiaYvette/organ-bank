@@ -9,6 +9,7 @@ module OrganBank.MmcShim (
     extractOrganIR,
 ) where
 
+import Control.Exception (SomeException, catch)
 import Control.Exception qualified
 import Data.Char (isSpace)
 import Data.List (isPrefixOf)
@@ -23,9 +24,19 @@ import System.FilePath (takeBaseName)
 import System.IO (hPutStrLn, stderr)
 import System.Process (readProcessWithExitCode)
 
+-- | Detect mmc version by running @mmc --version@.
+detectCompilerVersion :: IO Text
+detectCompilerVersion = do
+    (ec, out, _) <- readProcessWithExitCode "mmc" ["--version"] ""
+    pure $ case ec of
+        ExitSuccess | (l : _) <- lines out -> "mmc-shim-0.1 (" <> T.strip (T.pack l) <> ")"
+        _ -> "mmc-shim-0.1"
+  `catch` \(_ :: SomeException) -> pure "mmc-shim-0.1"
+
 -- | Extract Mercury HLDS from a source file and emit OrganIR JSON.
 extractOrganIR :: FilePath -> IO (Either Text Text)
 extractOrganIR inputPath = do
+    shimVer <- detectCompilerVersion
     -- Mercury compiler dumps HLDS to stderr with --dump-hlds
     (ec, _stdout, stderrOut) <-
         readProcessWithExitCode "mmc" ["--dump-hlds", "50", inputPath] ""
@@ -49,7 +60,7 @@ extractOrganIR inputPath = do
                 ir =
                     renderOrganIR $
                         IR.OrganIR
-                            { IR.irMetadata = IR.Metadata IR.LMercury Nothing Nothing "mmc-shim-0.1" Nothing
+                            { IR.irMetadata = IR.Metadata IR.LMercury Nothing Nothing shimVer Nothing
                             , IR.irModule = IR.Module (T.pack modName) exports defs [] []
                             }
             pure $ Right ir

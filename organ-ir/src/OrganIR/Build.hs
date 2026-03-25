@@ -115,6 +115,10 @@ eString = ELit . LitString
 eBool :: Bool -> Expr
 eBool = ELit . LitBool
 
+-- | Function application (multiple arguments).
+eApp :: Expr -> [Expr] -> Expr
+eApp = EApp
+
 -- | Function application (single argument).
 eApp1 :: Expr -> Expr -> Expr
 eApp1 f a = EApp f [a]

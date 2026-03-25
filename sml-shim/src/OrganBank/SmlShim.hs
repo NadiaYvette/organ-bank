@@ -19,8 +19,18 @@ import System.Exit (ExitCode (..))
 import System.FilePath (takeBaseName)
 import System.Process (readProcessWithExitCode)
 
+-- | Detect MLton version by running @mlton@ (no args prints version to stdout).
+detectCompilerVersion :: IO Text
+detectCompilerVersion = do
+    (_ec, out, _err) <- readProcessWithExitCode "mlton" [] ""
+    pure $ case lines out of
+        (l : _) | not (null l) -> "sml-shim-0.1 (" <> T.strip (T.pack l) <> ")"
+        _ -> "sml-shim-0.1"
+  `catch` \(_ :: SomeException) -> pure "sml-shim-0.1"
+
 extractOrganIR :: FilePath -> IO (Either String Text)
 extractOrganIR inputPath = do
+    shimVer <- detectCompilerVersion
     -- MLton needs an .mlb file for compilation
     let mlbPath = "/tmp/organ-bank-sml.mlb"
         mlbContent = "$(SML_LIB)/basis/basis.mlb\n" ++ inputPath ++ "\n"
@@ -36,7 +46,7 @@ extractOrganIR inputPath = do
         types = parseBasis basis
         defs = parseSmlSource source types
         modName = takeBaseName inputPath
-        json = emitOrganIR modName inputPath defs
+        json = emitOrganIR shimVer modName inputPath defs
     return $ Right json
 
 data SmlDef = SmlDef
@@ -108,10 +118,10 @@ lookupType :: Text -> [(Text, Text)] -> Text
 lookupType nm types = fromMaybe "any" (lookup nm types)
 
 -- | Emit OrganIR JSON for SML definitions using the organ-ir library.
-emitOrganIR :: String -> FilePath -> [SmlDef] -> Text
-emitOrganIR modName srcFile defs =
+emitOrganIR :: Text -> String -> FilePath -> [SmlDef] -> Text
+emitOrganIR shimVer modName srcFile defs =
     renderOrganIR $
-        IR.simpleOrganIR IR.LSml "sml-shim-0.1" (T.pack modName) srcFile $
+        IR.simpleOrganIR IR.LSml shimVer (T.pack modName) srcFile $
             map smlDefToIR defs
 
 smlDefToIR :: SmlDef -> IR.Definition

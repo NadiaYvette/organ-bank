@@ -12,6 +12,7 @@ module OrganBank.OcamlShim (
     extractOrganIR,
 ) where
 
+import Control.Exception (SomeException, catch)
 import Data.Char (isAlphaNum, isAsciiLower, isDigit, isSpace)
 import Data.List (isPrefixOf)
 import Data.Text (Text)
@@ -27,9 +28,19 @@ import System.Process (readProcessWithExitCode)
 -- Public API
 -- ---------------------------------------------------------------------------
 
+-- | Detect ocamlopt version by running @ocamlopt --version@.
+detectCompilerVersion :: IO Text
+detectCompilerVersion = do
+    (ec, out, _) <- readProcessWithExitCode "ocamlopt" ["--version"] ""
+    pure $ case ec of
+        ExitSuccess -> "ocaml-shim-0.1 (ocamlopt " <> T.strip (T.pack out) <> ")"
+        _ -> "ocaml-shim-0.1"
+  `catch` \(_ :: SomeException) -> pure "ocaml-shim-0.1"
+
 -- | Extract OCaml Lambda IR from a @.ml@ file and return OrganIR JSON.
 extractOrganIR :: FilePath -> IO (Either String Text)
 extractOrganIR inputPath = do
+    shimVer <- detectCompilerVersion
     -- ocamlopt -dlambda prints Lambda IR to stdout, compiles to .cmx/.o
     -- We use -c to avoid linking.
     (exitCode, stdout_, stderr_) <-
@@ -42,7 +53,7 @@ extractOrganIR inputPath = do
             let modName = capitalise (takeBaseName inputPath)
                 defs = parseLambdaIR lambdaText
                 exports = extractExports lambdaText
-                json = emitOrganIR modName inputPath defs exports
+                json = emitOrganIR shimVer modName inputPath defs exports
             pure (Right json)
         ExitFailure _ ->
             -- Even when compilation fails, -dlambda may still have printed IR
@@ -53,7 +64,7 @@ extractOrganIR inputPath = do
                     let modName = capitalise (takeBaseName inputPath)
                         defs = parseLambdaIR lambdaText
                         exports = extractExports lambdaText
-                        json = emitOrganIR modName inputPath defs exports
+                        json = emitOrganIR shimVer modName inputPath defs exports
                     pure (Right json)
 
 -- ---------------------------------------------------------------------------
@@ -375,14 +386,14 @@ findMakeBlock _ = []
 -- OrganIR emission via organ-ir library
 -- ---------------------------------------------------------------------------
 
-emitOrganIR :: String -> FilePath -> [LambdaDef] -> [String] -> Text
-emitOrganIR modName srcFile defs exports =
+emitOrganIR :: Text -> String -> FilePath -> [LambdaDef] -> [String] -> Text
+emitOrganIR shimVer modName srcFile defs exports =
     let meta =
             IR.Metadata
                 IR.LOCaml
                 Nothing
                 (Just (T.pack srcFile))
-                "ocaml-shim-0.1"
+                shimVer
                 Nothing
         modul =
             IR.Module

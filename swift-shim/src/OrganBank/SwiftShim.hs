@@ -12,6 +12,7 @@ module OrganBank.SwiftShim (
     extractOrganIR,
 ) where
 
+import Control.Exception (SomeException, catch)
 import Data.Char (isAlphaNum, isDigit)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
@@ -57,16 +58,26 @@ data SILFunction = SILFunction
 -- Top-level entry point
 -- ---------------------------------------------------------------------------
 
+-- | Detect swiftc version by running @swiftc --version@.
+detectCompilerVersion :: IO Text
+detectCompilerVersion = do
+    (ec, out, _) <- readProcessWithExitCode "swiftc" ["--version"] ""
+    pure $ case ec of
+        ExitSuccess | (l : _) <- lines out -> "swift-shim-0.1 (" <> T.strip (T.pack l) <> ")"
+        _ -> "swift-shim-0.1"
+  `catch` \(_ :: SomeException) -> pure "swift-shim-0.1"
+
 -- | Extract OrganIR JSON from a Swift source file.
 extractOrganIR :: FilePath -> IO (Either Text Text)
 extractOrganIR inputPath = do
+    shimVer <- detectCompilerVersion
     (exitCode, silText, stderrText) <-
         readProcessWithExitCode "swiftc" ["-emit-sil", inputPath] ""
     case exitCode of
         ExitSuccess -> do
             let modName = takeBaseName inputPath
                 fns = parseSIL (T.pack silText)
-            pure $ Right $ emitOrganIR modName fns
+            pure $ Right $ emitOrganIR shimVer modName fns
         ExitFailure code ->
             pure $
                 Left $
@@ -379,10 +390,10 @@ demangleName name
 -- ---------------------------------------------------------------------------
 
 -- | Emit the parsed SIL functions as OrganIR JSON.
-emitOrganIR :: String -> [SILFunction] -> Text
-emitOrganIR modName fns =
+emitOrganIR :: Text -> String -> [SILFunction] -> Text
+emitOrganIR shimVer modName fns =
     renderOrganIR $
-        IR.organIR IR.LSwift "swift-shim-0.1" (T.pack modName) (zipWith (funcToIR modName) [1 ..] fns)
+        IR.organIR IR.LSwift shimVer (T.pack modName) (zipWith (funcToIR modName) [1 ..] fns)
 
 -- | Convert a parsed SIL function to an OrganIR Definition.
 funcToIR :: String -> Int -> SILFunction -> IR.Definition

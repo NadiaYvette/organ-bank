@@ -10,6 +10,7 @@ OrganIR JSON on stdout. The MAlonzo directory is cleaned up afterward.
 -}
 module OrganBank.AgdaShim (
     extractOrganIR,
+    parseTreeless,
 ) where
 
 import Data.Char (isAlphaNum, isDigit, isSpace)
@@ -69,7 +70,7 @@ data Branch = Branch
 extractOrganIR :: FilePath -> IO (Either Text Text)
 extractOrganIR inputPath = do
     -- Detect agda version for metadata
-    agdaVer <- detectAgdaVersion
+    (agdaVer, shimVer) <- detectAgdaVersion
 
     -- Run agda --compile --ghc-dont-call-ghc
     (ec, _stdout, stderrOut) <-
@@ -94,7 +95,7 @@ extractOrganIR inputPath = do
                     allDefs <- concat <$> mapM parseHsFile hsFiles
 
                     let modName = takeBaseName inputPath
-                        json = emitOrganIR modName inputPath agdaVer allDefs
+                        json = emitOrganIR shimVer modName inputPath agdaVer allDefs
 
                     -- Clean up
                     doesDirectoryExist "MAlonzo" >>= \exists ->
@@ -102,18 +103,19 @@ extractOrganIR inputPath = do
 
                     pure $ Right json
 
--- | Detect the agda compiler version string.
-detectAgdaVersion :: IO String
+-- | Detect the agda compiler version string. Returns (compilerVer, shimVer).
+detectAgdaVersion :: IO (String, Text)
 detectAgdaVersion = do
     result <- readProcessWithExitCode "agda" ["--version"] ""
     case result of
         (ExitSuccess, out, _) ->
             -- "Agda version 2.8.0\n" -> "agda-2.8.0"
-            let ver = case lines out of
-                    (l : _) -> dropWhile (not . isDigit) l
-                    [] -> ""
-             in pure $ "agda-" ++ takeWhile (\c -> isDigit c || c == '.') ver
-        _ -> pure "agda-unknown"
+            let firstLine = case lines out of { (l : _) -> l; [] -> "" }
+                ver = dropWhile (not . isDigit) firstLine
+                compilerVer = "agda-" ++ takeWhile (\c -> isDigit c || c == '.') ver
+                shimVer = "agda-shim-0.1 (" <> T.strip (T.pack firstLine) <> ")"
+             in pure (compilerVer, shimVer)
+        _ -> pure ("agda-unknown", "agda-shim-0.1")
 
 -- | Recursively find .hs files under a directory.
 findHsFiles :: FilePath -> IO [FilePath]
@@ -437,13 +439,221 @@ parseApp s =
             (f : args) -> EApp (cleanName f) 0 (map (\a -> parseExprInner (stripOuter (trim a))) args)
 
 ------------------------------------------------------------------------
+-- Treeless text parser (Agda --treeless output)
+------------------------------------------------------------------------
+
+{- | Parse Agda treeless IR text into an OrganIR Expr.
+
+Treeless patterns:
+  @def qname@       → EVar
+  @con qname@       → ECon
+  @lit n@           → ELit
+  @qname args...@   → EApp
+  @lam x → body@    → ELam
+  @case x of alts@  → ECase
+  @unreachable@     → EUnreachable
+
+Falls back to @eApp (eVar "treeless") [eString rawText]@ for unparsed forms.
+-}
+parseTreeless :: Text -> IR.Expr
+parseTreeless raw =
+    let txt = T.strip raw
+     in if T.null txt
+            then IR.EUnreachable
+            else parseTreelessInner txt
+
+parseTreelessInner :: Text -> IR.Expr
+parseTreelessInner txt
+    -- unreachable
+    | txt == "unreachable" = IR.EUnreachable
+    -- def qname → EVar
+    | Just rest <- T.stripPrefix "def " txt =
+        IR.eVar (T.strip rest)
+    -- con qname → ECon (no args)
+    | Just rest <- T.stripPrefix "con " txt =
+        IR.ECon (IR.localName (T.strip rest)) []
+    -- lit n → ELit (integer or string)
+    | Just rest <- T.stripPrefix "lit " txt =
+        parseTreelessLit (T.strip rest)
+    -- lam x → body
+    | Just rest <- T.stripPrefix "lam " txt =
+        parseTreelessLam rest
+    -- case x of alts
+    | Just rest <- T.stripPrefix "case " txt =
+        parseTreelessCase rest
+    -- Parenthesised expression
+    | T.isPrefixOf "(" txt, T.isSuffixOf ")" txt =
+        let inner = T.strip (T.drop 1 (T.dropEnd 1 txt))
+         in if T.null inner
+                then treelessFallback txt
+                else parseTreelessInner inner
+    -- Integer literal (bare number)
+    | Just n <- readIntMaybe txt =
+        IR.eInt n
+    -- Simple variable (single word, no spaces)
+    | not (T.any (== ' ') txt), isTreelessName txt =
+        IR.eVar txt
+    -- Application: qname args...
+    | (f, rest) <- T.break (== ' ') txt
+    , not (T.null rest)
+    , isTreelessName f =
+        let args = parseTreelessArgs (T.strip rest)
+         in IR.EApp (IR.eVar f) args
+    -- Fallback
+    | otherwise = treelessFallback txt
+
+-- | Parse a treeless literal: integer or quoted string.
+parseTreelessLit :: Text -> IR.Expr
+parseTreelessLit txt
+    | Just n <- readIntMaybe txt = IR.eInt n
+    | T.isPrefixOf "\"" txt =
+        IR.eString (T.dropAround (== '"') txt)
+    | otherwise = IR.eString txt
+
+-- | Parse a treeless lambda: @lam x → body@ or @lam x -> body@
+parseTreelessLam :: Text -> IR.Expr
+parseTreelessLam rest =
+    -- Split at → or ->
+    let (paramPart, bodyPart) = splitTreelessArrow rest
+     in if T.null bodyPart
+            then treelessFallback ("lam " <> rest)
+            else
+                let params = T.words (T.strip paramPart)
+                 in IR.ELam
+                        (map (\p -> IR.LamParam (IR.name p) Nothing) params)
+                        (parseTreelessInner (T.strip bodyPart))
+
+-- | Parse a treeless case: @x of { alt1 ; alt2 ; ... }@
+parseTreelessCase :: Text -> IR.Expr
+parseTreelessCase rest =
+    let (scrutPart, afterOf) = splitTreelessOf rest
+        scrut = parseTreelessInner (T.strip scrutPart)
+        altsText = T.strip afterOf
+        -- Strip braces if present
+        altsInner =
+            if T.isPrefixOf "{" altsText && T.isSuffixOf "}" altsText
+                then T.strip (T.drop 1 (T.dropEnd 1 altsText))
+                else altsText
+        altTexts = splitTreelessAlts altsInner
+        branches = map parseTreelessAlt altTexts
+     in IR.ECase scrut branches
+
+-- | Parse a single case alternative: @con binders → body@ or @_ → body@
+parseTreelessAlt :: Text -> IR.Branch
+parseTreelessAlt alt =
+    let (patPart, bodyPart) = splitTreelessArrow alt
+        pat = T.strip patPart
+        body = parseTreelessInner (T.strip bodyPart)
+     in if pat == "_"
+            then IR.Branch IR.PatWild body
+            else case T.words pat of
+                [] -> IR.Branch IR.PatWild body
+                (c : bs) ->
+                    IR.Branch
+                        (IR.PatCon (IR.localName c) (map (\b -> IR.PatBinder (IR.name b) Nothing) bs))
+                        body
+
+-- | Split treeless arguments (space-separated, respecting parens).
+parseTreelessArgs :: Text -> [IR.Expr]
+parseTreelessArgs txt =
+    let tokens = splitTreelessTokens txt
+     in map parseTreelessInner tokens
+
+-- | Split text into tokens respecting parentheses.
+splitTreelessTokens :: Text -> [Text]
+splitTreelessTokens = go 0 T.empty []
+  where
+    go :: Int -> Text -> [Text] -> Text -> [Text]
+    go _ cur acc t | T.null t =
+        let cur' = T.strip cur
+         in reverse (if T.null cur' then acc else cur' : acc)
+    go depth cur acc t =
+        let (c, rest) = (T.head t, T.tail t)
+         in case c of
+                '(' -> go (depth + 1) (T.snoc cur c) acc rest
+                ')' -> go (max 0 (depth - 1)) (T.snoc cur c) acc rest
+                ' '
+                    | depth == 0 ->
+                        let cur' = T.strip cur
+                         in if T.null cur'
+                                then go 0 T.empty acc rest
+                                else go 0 T.empty (cur' : acc) rest
+                _ -> go depth (T.snoc cur c) acc rest
+
+-- | Split on → or -> (first occurrence at depth 0).
+splitTreelessArrow :: Text -> (Text, Text)
+splitTreelessArrow = go 0 T.empty
+  where
+    go :: Int -> Text -> Text -> (Text, Text)
+    go _ acc t | T.null t = (acc, T.empty)
+    go depth acc t
+        -- Check for → (unicode, 3 bytes)
+        | depth == 0, Just rest <- T.stripPrefix "\x2192" t =
+            (acc, rest)
+        -- Check for ->
+        | depth == 0, Just rest <- T.stripPrefix "->" t =
+            (acc, rest)
+        | otherwise =
+            let c = T.head t
+                rest = T.tail t
+                depth' = case c of
+                    '(' -> depth + 1
+                    ')' -> max 0 (depth - 1)
+                    _ -> depth
+             in go depth' (T.snoc acc c) rest
+
+-- | Split on " of " keyword.
+splitTreelessOf :: Text -> (Text, Text)
+splitTreelessOf txt =
+    case T.breakOn " of " txt of
+        (before, after)
+            | T.null after -> (txt, T.empty)
+            | otherwise -> (before, T.drop 4 after) -- drop " of "
+
+-- | Split case alternatives on semicolons at depth 0.
+splitTreelessAlts :: Text -> [Text]
+splitTreelessAlts = go 0 T.empty []
+  where
+    go :: Int -> Text -> [Text] -> Text -> [Text]
+    go _ cur acc t | T.null t =
+        let cur' = T.strip cur
+         in reverse (if T.null cur' then acc else cur' : acc)
+    go depth cur acc t =
+        let c = T.head t
+            rest = T.tail t
+         in case c of
+                '(' -> go (depth + 1) (T.snoc cur c) acc rest
+                ')' -> go (max 0 (depth - 1)) (T.snoc cur c) acc rest
+                ';'
+                    | depth == 0 ->
+                        let cur' = T.strip cur
+                         in go 0 T.empty (if T.null cur' then acc else cur' : acc) rest
+                _ -> go depth (T.snoc cur c) acc rest
+
+-- | Fallback: wrap unparsed text.
+treelessFallback :: Text -> IR.Expr
+treelessFallback raw = IR.EApp (IR.eVar "treeless") [IR.eString raw]
+
+-- | Check if text looks like a valid treeless name (alphanumeric + dots + underscores).
+isTreelessName :: Text -> Bool
+isTreelessName txt =
+    not (T.null txt)
+        && T.all (\c -> isAlphaNum c || c == '_' || c == '.' || c == '-' || c == '\'') txt
+
+-- | Try to read an integer from text.
+readIntMaybe :: Text -> Maybe Integer
+readIntMaybe txt = case reads (T.unpack txt) of
+    [(n, "")] -> Just n
+    _ -> Nothing
+
+------------------------------------------------------------------------
 -- OrganIR JSON emission
 ------------------------------------------------------------------------
 
 -- | Emit complete OrganIR JSON using organ-ir library.
-emitOrganIR :: String -> FilePath -> String -> [MAlonzoDef] -> Text
-emitOrganIR modName srcFile agdaVer defs =
-    let metadata = IR.Metadata IR.LAgda (Just (T.pack agdaVer)) (Just (T.pack srcFile)) "agda-shim-0.1" Nothing
+emitOrganIR :: Text -> String -> FilePath -> String -> [MAlonzoDef] -> Text
+emitOrganIR shimVer modName srcFile agdaVer defs =
+    let metadata = IR.Metadata IR.LAgda (Just (T.pack agdaVer)) (Just (T.pack srcFile)) shimVer Nothing
      in renderOrganIR $ IR.OrganIR metadata (IR.Module (T.pack modName) [] (zipWith defToIR [1 ..] defs) [] [])
 
 defToIR :: Int -> MAlonzoDef -> IR.Definition

@@ -3,6 +3,7 @@ Attempts to demangle C++ names via c++filt if available.
 -}
 module OrganBank.CppShim (extractOrganIR) where
 
+import Control.Exception (SomeException, catch)
 import Data.Text (Text)
 import Data.Text qualified as T
 import OrganIR.Build qualified as IR
@@ -12,8 +13,18 @@ import System.Exit (ExitCode (..))
 import System.FilePath (takeBaseName)
 import System.Process (readProcessWithExitCode)
 
+-- | Detect clang++ version by running @clang --version@.
+detectCompilerVersion :: IO Text
+detectCompilerVersion = do
+    (ec, out, _) <- readProcessWithExitCode "clang" ["--version"] ""
+    pure $ case ec of
+        ExitSuccess | (l : _) <- lines out -> "cpp-shim-0.1 (" <> T.strip (T.pack l) <> ")"
+        _ -> "cpp-shim-0.1"
+  `catch` \(_ :: SomeException) -> pure "cpp-shim-0.1"
+
 extractOrganIR :: FilePath -> IO (Either String Text)
 extractOrganIR inputPath = do
+    shimVer <- detectCompilerVersion
     (ec, out, err) <- readProcessWithExitCode "clang++" ["-emit-llvm", "-S", "-O2", "-o", "-", inputPath] ""
     case ec of
         ExitFailure _ -> return $ Left $ "clang++ failed: " ++ err
@@ -21,7 +32,7 @@ extractOrganIR inputPath = do
             let defs = parseLlvmIR (T.pack out)
             demangled <- mapM demangleFunc defs
             let modName = takeBaseName inputPath
-                json = emitOrganIR modName inputPath demangled
+                json = emitOrganIR shimVer modName inputPath demangled
             return $ Right json
 
 data LlvmFunc = LlvmFunc
@@ -117,10 +128,29 @@ parseBlocks = go "entry" []
                     else go lbl (trimmed : acc) ls
 
 -- | Emit OrganIR JSON using the organ-ir library.
-emitOrganIR :: String -> FilePath -> [LlvmFunc] -> Text
-emitOrganIR modName srcFile defs =
+emitOrganIR :: Text -> String -> FilePath -> [LlvmFunc] -> Text
+emitOrganIR shimVer modName srcFile defs =
     renderOrganIR $
-        IR.simpleOrganIR IR.LCpp "cpp-shim-0.1" (T.pack modName) srcFile (map funcToIR defs)
+        IR.simpleOrganIR IR.LCpp shimVer (T.pack modName) srcFile (map funcToIR defs)
+
+-- | Map an LLVM IR type string to an OrganIR type.
+llvmTypeToIR :: Text -> IR.Ty
+llvmTypeToIR t = case T.strip t of
+    "i1" -> IR.tCon "Bool"
+    "i8" -> IR.tCon "Int8"
+    "i16" -> IR.tCon "Int16"
+    "i32" -> IR.tCon "Int32"
+    "i64" -> IR.tCon "Int64"
+    "i128" -> IR.tCon "Int128"
+    "float" -> IR.tCon "Float32"
+    "double" -> IR.tCon "Float64"
+    "void" -> IR.tCon "Void"
+    s
+        | "ptr" == s || "*" `T.isSuffixOf` s -> IR.tCon "Ptr"
+        | "<" `T.isPrefixOf` s && ">" `T.isSuffixOf` s -> IR.tCon "Vec"
+        | "[" `T.isPrefixOf` s -> IR.tCon "Array"
+        | "{" `T.isPrefixOf` s -> IR.tCon "Struct"
+        | otherwise -> IR.tCon s
 
 funcToIR :: LlvmFunc -> IR.Definition
 funcToIR f =
@@ -128,9 +158,9 @@ funcToIR f =
         { IR.defName = IR.localName (lfDemangled f)
         , IR.defType =
             IR.TFn
-                (map (\(ty, _) -> IR.FnArg Nothing (IR.tCon ty)) (lfParams f))
+                (map (\(ty, _) -> IR.FnArg Nothing (llvmTypeToIR ty)) (lfParams f))
                 IR.pureEffect
-                (IR.tCon (lfRetTy f))
+                (llvmTypeToIR (lfRetTy f))
         , IR.defExpr = IR.EApp (IR.eVar "ssa_body") (map blockToIR (lfBlocks f))
         , IR.defSort = IR.SFun
         , IR.defVisibility = IR.Public
