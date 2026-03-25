@@ -14,9 +14,10 @@ import OrganIR.Types qualified as IR
 -- | Emit OrganIR JSON for a Lua program.
 emitLuaIR :: String -> FilePath -> Block -> Text
 emitLuaIR modName srcFile block =
-    renderOrganIR $
-        IR.simpleOrganIR IR.LLua "lua-frontend-0.1" (T.pack modName) srcFile $
-            blockToDefs block
+    let defs = blockToDefs block
+        exports = map (IR.nameText . IR.qnName . IR.defName) defs
+    in  renderOrganIR $
+            IR.organIRWithExports IR.LLua "lua-frontend-0.1" (T.pack modName) srcFile exports defs
 
 blockToDefs :: Block -> [IR.Definition]
 blockToDefs = concatMap statToDef

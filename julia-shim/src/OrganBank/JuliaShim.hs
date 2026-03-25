@@ -8,12 +8,13 @@ module OrganBank.JuliaShim
   ) where
 
 import Data.Text (Text)
-import qualified Data.Text as T
-import System.Process (readProcessWithExitCode)
-import System.Exit (ExitCode(..))
-import System.FilePath ((</>), takeDirectory)
+import Data.Text qualified as T
+import OrganIR.Parse (parseOrganIR)
 import System.Directory (doesFileExist)
 import System.Environment (getExecutablePath)
+import System.Exit (ExitCode(..))
+import System.FilePath ((</>), takeDirectory)
+import System.Process (readProcessWithExitCode)
 
 -- | Extract Julia typed IR from a .jl source file and return OrganIR JSON.
 --
@@ -31,7 +32,7 @@ extractOrganIR inputPath = do
       (exitCode, stdout, stderr_) <-
         readProcessWithExitCode "julia" ["--startup-file=no", script, inputPath] ""
       case exitCode of
-        ExitSuccess -> pure $ Right (T.pack stdout)
+        ExitSuccess -> pure $ validateJson (T.pack stdout)
         ExitFailure code ->
           pure $ Left $
             "julia exited with code " <> show code <> ":\n" <> stderr_
@@ -57,3 +58,9 @@ findFirst [] = pure Nothing
 findFirst (p:ps) = do
   exists <- doesFileExist p
   if exists then pure (Just p) else findFirst ps
+
+-- | Validate JSON output by parsing it as OrganIR.
+validateJson :: Text -> Either String Text
+validateJson json = case parseOrganIR json of
+    Left err -> Left $ "JSON parse error: " ++ T.unpack err
+    Right _ir -> Right json

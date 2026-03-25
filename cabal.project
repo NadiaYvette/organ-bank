@@ -22,3 +22,7 @@ packages:
   fortran-shim/
   ada-shim/
   scala3-shim/
+  cl-shim/
+  scheme-shim/
+  julia-shim/
+  zig-shim/

@@ -21,3 +21,4 @@ executable julia-organ
     , process
     , filepath
     , directory
+    , organ-ir

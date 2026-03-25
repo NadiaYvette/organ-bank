@@ -18,25 +18,27 @@ import SmlFrontend.Syntax.Ident
 -- | Emit OrganIR JSON for a program with inferred types.
 emitOrganIR :: String -> FilePath -> Program -> InferState -> Text
 emitOrganIR modName srcFile (Program decs) st =
-    renderOrganIR $
-        IR.OrganIR
-            { IR.irMetadata =
-                IR.Metadata
-                    { IR.metaSourceLang = IR.LSml
-                    , IR.metaCompilerVersion = Nothing
-                    , IR.metaSourceFile = Just (T.pack srcFile)
-                    , IR.metaShimVersion = "sml-frontend-0.1"
-                    , IR.metaTimestamp = Nothing
-                    }
-            , IR.irModule =
-                IR.Module
-                    { IR.modName = T.pack modName
-                    , IR.modExports = []
-                    , IR.modDefs = concatMap (decToDefs st) decs
-                    , IR.modDataTypes = []
-                    , IR.modEffectDecls = []
-                    }
-            }
+    let defs = concatMap (decToDefs st) decs
+        exports = map (IR.nameText . IR.qnName . IR.defName) defs
+    in  renderOrganIR $
+            IR.OrganIR
+                { IR.irMetadata =
+                    IR.Metadata
+                        { IR.metaSourceLang = IR.LSml
+                        , IR.metaCompilerVersion = Nothing
+                        , IR.metaSourceFile = Just (T.pack srcFile)
+                        , IR.metaShimVersion = "sml-frontend-0.1"
+                        , IR.metaTimestamp = Nothing
+                        }
+                , IR.irModule =
+                    IR.Module
+                        { IR.modName = T.pack modName
+                        , IR.modExports = exports
+                        , IR.modDefs = defs
+                        , IR.modDataTypes = []
+                        , IR.modEffectDecls = []
+                        }
+                }
 
 decToDefs :: InferState -> Dec -> [IR.Definition]
 decToDefs st = \case

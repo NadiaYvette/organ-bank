@@ -44,9 +44,14 @@ extractOrganIR inputPath = do
         else do
             let modName = takeBaseName inputPath
                 preds = parseHldsDump dump
+                defs = zipWith predToIR [1 ..] preds
+                exports = map (T.pack . predName) preds
                 ir =
                     renderOrganIR $
-                        IR.organIR IR.LMercury "mmc-shim-0.1" (T.pack modName) (zipWith predToIR [1 ..] preds)
+                        IR.OrganIR
+                            { IR.irMetadata = IR.Metadata IR.LMercury Nothing Nothing "mmc-shim-0.1" Nothing
+                            , IR.irModule = IR.Module (T.pack modName) exports defs [] []
+                            }
             pure $ Right ir
 
 tryReadFile :: FilePath -> IO (Maybe String)

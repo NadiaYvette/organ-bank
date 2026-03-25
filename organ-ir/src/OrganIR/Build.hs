@@ -38,6 +38,14 @@ simpleOrganIR lang shimVer modName srcFile defs =
         , irModule = Module modName [] defs [] []
         }
 
+-- | Like simpleOrganIR but with explicit exports list.
+organIRWithExports :: SourceLang -> Text -> Text -> FilePath -> [Text] -> [Definition] -> OrganIR
+organIRWithExports lang shimVer modName srcFile exports defs =
+    OrganIR
+        { irMetadata = Metadata lang Nothing (Just (T.pack srcFile)) shimVer Nothing
+        , irModule = Module modName exports defs [] []
+        }
+
 -- | Build a full OrganIR document.
 organIRFull :: Metadata -> Module -> OrganIR
 organIRFull = OrganIR

@@ -4,7 +4,7 @@
 -- std.zig.AstGen to parse a Zig source file and produce ZIR.
 -- The tool emits OrganIR JSON directly on stdout.
 --
--- ZIR is *untyped* IR — it is the output of AstGen, before semantic
+-- ZIR is *untyped* IR -- it is the output of AstGen, before semantic
 -- analysis (Sema). It captures the syntactic structure of the code
 -- as Zig IR instructions but does not resolve types.
 
@@ -13,11 +13,12 @@ module OrganBank.ZigShim
   ) where
 
 import Data.Text (Text)
-import qualified Data.Text as T
-import System.FilePath ((</>))
+import Data.Text qualified as T
+import OrganIR.Parse (parseOrganIR)
 import System.Directory (doesFileExist, getCurrentDirectory)
-import System.Process (readProcessWithExitCode)
 import System.Exit (ExitCode(..))
+import System.FilePath ((</>))
+import System.Process (readProcessWithExitCode)
 
 -- | Extract ZIR from a Zig source file and return OrganIR JSON.
 --
@@ -32,7 +33,7 @@ extractOrganIR inputPath = do
     Just tool -> do
       (exitCode, stdout', stderr') <- readProcessWithExitCode tool [inputPath] ""
       case exitCode of
-        ExitSuccess -> pure $ Right (T.pack stdout')
+        ExitSuccess -> pure $ validateJson (T.pack stdout')
         ExitFailure _ -> pure $ Left $
           "zir-extract failed:\n" <> stderr'
 
@@ -57,3 +58,9 @@ findFirst (p:ps) = do
   exists <- doesFileExist p
   if exists then pure (Just p)
   else findFirst ps
+
+-- | Validate JSON output by parsing it as OrganIR.
+validateJson :: Text -> Either String Text
+validateJson json = case parseOrganIR json of
+    Left err -> Left $ "JSON parse error: " ++ T.unpack err
+    Right _ir -> Right json

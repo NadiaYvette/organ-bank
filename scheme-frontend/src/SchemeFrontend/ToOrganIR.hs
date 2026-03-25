@@ -12,25 +12,27 @@ import SchemeFrontend.AST
 -- | Emit OrganIR JSON for a Scheme program.
 emitSchemeIR :: String -> FilePath -> [TopLevel] -> Text
 emitSchemeIR modName srcFile tops =
-    renderOrganIR $
-        OrganIR
-            { irMetadata =
-                Metadata
-                    { metaSourceLang = LScheme
-                    , metaCompilerVersion = Nothing
-                    , metaSourceFile = Just (T.pack srcFile)
-                    , metaShimVersion = "scheme-frontend-0.1"
-                    , metaTimestamp = Nothing
-                    }
-            , irModule =
-                Module
-                    { modName = T.pack modName
-                    , modExports = []
-                    , modDefs = concatMap topLevelToDefs tops
-                    , modDataTypes = []
-                    , modEffectDecls = []
-                    }
-            }
+    let defs = concatMap topLevelToDefs tops
+        exports = map (nameText . qnName . defName) defs
+    in  renderOrganIR $
+            OrganIR
+                { irMetadata =
+                    Metadata
+                        { metaSourceLang = LScheme
+                        , metaCompilerVersion = Nothing
+                        , metaSourceFile = Just (T.pack srcFile)
+                        , metaShimVersion = "scheme-frontend-0.1"
+                        , metaTimestamp = Nothing
+                        }
+                , irModule =
+                    Module
+                        { modName = T.pack modName
+                        , modExports = exports
+                        , modDefs = defs
+                        , modDataTypes = []
+                        , modEffectDecls = []
+                        }
+                }
 
 topLevelToDefs :: TopLevel -> [Definition]
 topLevelToDefs = \case

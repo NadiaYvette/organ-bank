@@ -16,5 +16,7 @@ executable cl-organ
     text,
     process,
     containers,
-    filepath
+    filepath,
+    directory,
+    organ-ir
   ghc-options: -Wall

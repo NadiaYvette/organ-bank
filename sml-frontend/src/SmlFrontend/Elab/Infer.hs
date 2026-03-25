@@ -182,6 +182,35 @@ isSyntacticValue = \case
     _ -> False
 
 ------------------------------------------------------------------------
+-- Surface type → internal type translation
+------------------------------------------------------------------------
+
+-- | Translate a surface SML type to an internal type.
+-- Type variables are mapped to fresh unification variables, with
+-- consistent mapping maintained via a stateful Map.
+translateTy :: Ty -> InferM ITy
+translateTy ty = evalStateT (go ty) Map.empty
+  where
+    go :: Ty -> StateT (Map.Map T.Text ITy) (ExceptT String (State InferState)) ITy
+    go (TyTyVar (TyVar name _)) = do
+        m <- get
+        case Map.lookup name m of
+            Just v -> return v
+            Nothing -> do
+                v <- lift fresh
+                modify' (Map.insert name v)
+                return v
+    go (TyApp args (LongTyCon _ (TyCon tc))) = do
+        args' <- mapM go args
+        return (ITyCon (T.unpack tc) args')
+    go (TyFun a b) = ITyFun <$> go a <*> go b
+    go (TyTuple ts) = ITyTuple <$> mapM go ts
+    go (TyRecord fields) = do
+        fields' <- mapM (\(Lab l, t) -> do t' <- go t; return (T.unpack l, t')) fields
+        return (ITyRecord fields')
+    go (TyPos _ t) = go t
+
+------------------------------------------------------------------------
 -- Variable lookup
 ------------------------------------------------------------------------
 
@@ -275,7 +304,11 @@ infer (ERecord fields) = do
     tys <- mapM (\(Lab l, e) -> do t <- infer e; return (T.unpack l, t)) fields
     return (ITyRecord tys)
 -- Type annotation
-infer (ETyped e _ty) = infer e -- TODO: check annotation
+infer (ETyped e ty) = do
+    te <- infer e
+    ity <- translateTy ty
+    unify te ity
+    return te
 -- Infix
 infer (EInfix l (VId op) r) = infer (EApp (EVar (LongVId [] (VId op))) (ETuple [l, r]))
 -- Sequencing
@@ -369,7 +402,11 @@ inferPat (PCon (LongVId _ (VId name)) (Just argPat)) = do
         Nothing -> throwE $ "Unknown constructor: " ++ T.unpack name
 inferPat (PInfix p1 (VId op) p2) =
     inferPat (PCon (LongVId [] (VId op)) (Just (PTuple [p1, p2])))
-inferPat (PTyped p _ty) = inferPat p -- TODO: check annotation
+inferPat (PTyped p ty) = do
+    (bs, tp) <- inferPat p
+    ity <- translateTy ty
+    unify tp ity
+    return (bs, tp)
 inferPat (PAs (VId name) p) = do
     (bs, t) <- inferPat p
     return ((T.unpack name, monoScheme t) : bs, t)
@@ -393,11 +430,11 @@ inferDec (DVal _ binds) = mapM_ inferValBind binds
 -- fun clauses
 inferDec (DFun _ binds) = mapM_ inferFunBind binds
 -- type alias (just record in env for now)
-inferDec (DType _) = return () -- TODO
+inferDec (DType typbinds) = mapM_ inferTypBind typbinds
 -- datatype
 inferDec (DDatatype datbinds) = mapM_ inferDatBind datbinds
 -- exception
-inferDec (DException _) = return () -- TODO
+inferDec (DException exbinds) = mapM_ inferExBind exbinds
 -- local
 inferDec (DLocal decs1 decs2) = mapM_ inferDec decs1 >> mapM_ inferDec decs2
 -- Sequential
@@ -465,14 +502,50 @@ inferDatBind (DatBind tyvars (TyCon tcName) conbinds) = do
             tc = T.unpack tcName
         modifyConEnv (extendCon cn scheme tc)
         modifyEnv (extendEnv cn scheme)
-    registerCon tvUids resTy (ConBind (VId cname) (Just _argTy)) = do
-        argFresh <- fresh -- TODO: translate surface type to internal type
-        let conTy = ITyFun argFresh resTy
+    registerCon tvUids resTy (ConBind (VId cname) (Just argTy)) = do
+        argTy' <- translateTy argTy
+        let conTy = ITyFun argTy' resTy
             scheme = Scheme tvUids conTy
             cn = T.unpack cname
             tc = T.unpack tcName
         modifyConEnv (extendCon cn scheme tc)
         modifyEnv (extendEnv cn scheme)
+
+inferTypBind :: TypBind -> InferM ()
+inferTypBind (TypBind tyvars (TyCon tcName) rhs) = do
+    -- Create fresh variables for the type parameters
+    freshTvs <- mapM (const fresh) tyvars
+    let tvUids = [u | ITyVar u <- freshTvs]
+    -- Translate the right-hand side type
+    rhsTy <- translateTy rhs
+    -- Unify each tyvar in the RHS with corresponding fresh variable
+    -- by building a mapping from tyvar names to our fresh vars
+    -- and re-translating. For simplicity, register the alias as a
+    -- type scheme so that uses of the type name expand correctly.
+    let scheme = Scheme tvUids rhsTy
+    modifyEnv (extendEnv (T.unpack tcName) scheme)
+
+inferExBind :: ExBind -> InferM ()
+inferExBind (ExNew (VId cname) Nothing) = do
+    let cn = T.unpack cname
+        scheme = monoScheme tyExn
+    modifyConEnv (extendCon cn scheme "exn")
+    modifyEnv (extendEnv cn scheme)
+inferExBind (ExNew (VId cname) (Just argTy)) = do
+    argTy' <- translateTy argTy
+    let cn = T.unpack cname
+        conTy = ITyFun argTy' tyExn
+        scheme = monoScheme conTy
+    modifyConEnv (extendCon cn scheme "exn")
+    modifyEnv (extendEnv cn scheme)
+inferExBind (ExRepl (VId cname) (LongVId _ (VId origName))) = do
+    cenv <- getConEnv
+    case lookupCon (T.unpack origName) cenv of
+        Just (s, tc) -> do
+            let cn = T.unpack cname
+            modifyConEnv (extendCon cn s tc)
+            modifyEnv (extendEnv cn s)
+        Nothing -> throwE $ "Unknown exception constructor: " ++ T.unpack origName
 
 ------------------------------------------------------------------------
 -- Top-level entry point

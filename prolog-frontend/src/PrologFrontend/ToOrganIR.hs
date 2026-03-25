@@ -19,9 +19,10 @@ import PrologFrontend.Term
 -- | Emit OrganIR JSON for a Prolog program.
 emitPrologIR :: String -> FilePath -> [Sentence] -> Text
 emitPrologIR modName srcFile sentences =
-    renderOrganIR $
-        simpleOrganIR LProlog "prolog-frontend-0.1" (T.pack modName) srcFile $
-            concatMap predToDef (Map.toList grouped)
+    let defs = concatMap predToDef (Map.toList grouped)
+        exports = map (nameText . qnName . defName) defs
+    in  renderOrganIR $
+            organIRWithExports LProlog "prolog-frontend-0.1" (T.pack modName) srcFile exports defs
   where
     clauses = [c | c@(SClause _ _) <- sentences]
     grouped = groupClauses clauses

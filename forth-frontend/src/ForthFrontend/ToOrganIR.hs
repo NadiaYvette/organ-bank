@@ -14,9 +14,10 @@ import OrganIR.Types qualified as IR
 -- | Emit OrganIR JSON for a Forth program.
 emitForthIR :: String -> FilePath -> [ForthItem] -> Text
 emitForthIR modName srcFile items =
-    renderOrganIR $
-        IR.simpleOrganIR IR.LForth "forth-frontend-0.1" (T.pack modName) srcFile $
-            concatMap itemToDefs items
+    let defs = concatMap itemToDefs items
+        exports = map (IR.nameText . IR.qnName . IR.defName) defs
+    in  renderOrganIR $
+            IR.organIRWithExports IR.LForth "forth-frontend-0.1" (T.pack modName) srcFile exports defs
 
 itemToDefs :: ForthItem -> [IR.Definition]
 itemToDefs = \case

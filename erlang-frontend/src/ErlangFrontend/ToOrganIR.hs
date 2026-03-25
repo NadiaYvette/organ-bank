@@ -14,9 +14,15 @@ import OrganIR.Types qualified as IR
 -- | Emit OrganIR JSON for an Erlang program.
 emitErlangIR :: String -> FilePath -> [Form] -> Text
 emitErlangIR modName srcFile forms =
-    renderOrganIR $
-        IR.simpleOrganIR IR.LErlang "erlang-frontend-0.1" (T.pack modName) srcFile $
-            concatMap formToDefs forms
+    let defs = concatMap formToDefs forms
+        exports = extractExports forms
+    in  renderOrganIR $
+            IR.organIRWithExports IR.LErlang "erlang-frontend-0.1" (T.pack modName) srcFile exports defs
+
+-- | Extract exported function names from -export([...]) attributes.
+extractExports :: [Form] -> [Text]
+extractExports forms =
+    [ n | FExport pairs <- forms, (n, _arity) <- pairs ]
 
 formToDefs :: Form -> [IR.Definition]
 formToDefs = \case

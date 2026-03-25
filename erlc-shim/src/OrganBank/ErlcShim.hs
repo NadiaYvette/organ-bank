@@ -62,7 +62,8 @@ extractOrganIR inputPath = do
                     let modName = takeBaseName inputPath
                         funs = parseCoreErlang content
                         defs = map coreFunToDef funs
-                        ir = IR.simpleOrganIR IR.LErlang "erlc-shim-0.1" (T.pack modName) inputPath defs
+                        exports = map (T.pack . cfName) funs
+                        ir = IR.organIRWithExports IR.LErlang "erlc-shim-0.1" (T.pack modName) inputPath exports defs
                     pure $ Right $ renderOrganIR ir
 
 tryReadFile :: FilePath -> IO (Maybe String)

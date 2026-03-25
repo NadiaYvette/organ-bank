@@ -26,6 +26,17 @@ library
     text
   ghc-options: -Wall
 
+executable organ-validate
+  default-language: GHC2024
+  default-extensions: OverloadedStrings
+  hs-source-dirs: app
+  main-is: Validate.hs
+  build-depends:
+    base >= 4.20 && < 5,
+    text,
+    organ-ir
+  ghc-options: -Wall
+
 test-suite roundtrip
   type: exitcode-stdio-1.0
   default-language: GHC2024

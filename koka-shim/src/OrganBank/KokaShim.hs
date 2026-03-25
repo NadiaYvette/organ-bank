@@ -332,10 +332,12 @@ mapType t = case T.strip t of
 
 moduleToIR :: OrganModule -> IR.OrganIR
 moduleToIR m =
-    IR.OrganIR
-        { IR.irMetadata = IR.Metadata IR.LKoka Nothing Nothing "koka-shim-0.1" Nothing
-        , IR.irModule = IR.Module (omName m) (omImports m) (map defToIR (omDefs m)) [] []
-        }
+    let defs = map defToIR (omDefs m)
+        exports = map odName (omDefs m)
+    in  IR.OrganIR
+            { IR.irMetadata = IR.Metadata IR.LKoka Nothing Nothing "koka-shim-0.1" Nothing
+            , IR.irModule = IR.Module (omName m) exports defs [] []
+            }
 
 defToIR :: OrganDef -> IR.Definition
 defToIR d =

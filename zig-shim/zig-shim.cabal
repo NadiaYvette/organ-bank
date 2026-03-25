@@ -21,3 +21,4 @@ executable zig-organ
     , process
     , filepath
     , directory
+    , organ-ir
