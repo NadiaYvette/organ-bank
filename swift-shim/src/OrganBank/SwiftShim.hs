@@ -49,6 +49,8 @@ data SILFunction = SILFunction
     -- ^ Whether the function has @async attribute
     , silARC :: !Bool
     -- ^ Whether the body contains strong_retain/strong_release
+    , silBodyBlocks :: ![(Text, [Text])]
+    -- ^ Parsed basic blocks: [(label, [instructions])]
     }
 
 -- ---------------------------------------------------------------------------
@@ -128,6 +130,8 @@ parseFuncAt allLines (lineIdx, headerLine) =
         hasARC = any isARCInstruction bodyLines
         -- Demangle the name
         demangled = demangleName mangledName
+        -- Parse basic blocks into (label, [instructions]) pairs
+        blocks = extractBlocks bodyLines
      in
         SILFunction
             { silName = mangledName
@@ -140,6 +144,7 @@ parseFuncAt allLines (lineIdx, headerLine) =
             , silThrows = throws
             , silAsync = async
             , silARC = hasARC
+            , silBodyBlocks = blocks
             }
 
 -- | Extract the mangled name from @name in the header.
@@ -313,6 +318,24 @@ isARCInstruction line =
         , "end_borrow"
         ]
 
+-- | Extract basic blocks from body lines as (label, [instructions]) pairs.
+extractBlocks :: [Text] -> [(Text, [Text])]
+extractBlocks = go Nothing []
+  where
+    go :: Maybe Text -> [Text] -> [Text] -> [(Text, [Text])]
+    go Nothing _ [] = []
+    go (Just lbl) acc [] = [(lbl, reverse acc)]
+    go Nothing _ (l : ls)
+        | isBasicBlockLabel l =
+            let lbl = T.strip (T.takeWhile (/= ':') (T.stripStart l))
+             in go (Just lbl) [] ls
+        | otherwise = go Nothing [] ls
+    go (Just lbl) acc (l : ls)
+        | isBasicBlockLabel l =
+            let newLbl = T.strip (T.takeWhile (/= ':') (T.stripStart l))
+             in (lbl, reverse acc) : go (Just newLbl) [] ls
+        | otherwise = go (Just lbl) (T.strip l : acc) ls
+
 -- ---------------------------------------------------------------------------
 -- Name Demangling (best-effort)
 -- ---------------------------------------------------------------------------
@@ -378,10 +401,17 @@ funcToIR modName uid fn =
         effectRow = IR.EffectRow effects Nothing
         fnTy = IR.TFn paramArgs effectRow retTy
         vis = if silAccess fn == "public" then IR.Public else IR.Private
+        bodyExpr
+            | null (silBodyBlocks fn) =
+                IR.EApp (IR.eVar "sil_body") [IR.eString "<empty>"]
+            | otherwise =
+                IR.EApp (IR.eVar "sil_body") (map blockToIR (silBodyBlocks fn))
+        blockToIR (lbl, instrs) =
+            IR.ETuple [IR.eString lbl, IR.EList (map IR.eString instrs)]
      in IR.Definition
             { IR.defName = IR.QName (T.pack modName) (IR.Name readName uid)
             , IR.defType = fnTy
-            , IR.defExpr = IR.ELit (IR.LitInt 0)
+            , IR.defExpr = bodyExpr
             , IR.defSort = IR.SFun
             , IR.defVisibility = vis
             , IR.defArity = length (silParams fn)

@@ -94,9 +94,9 @@ validateDef path def =
 
     placeholderChecks = case defExpr def of
         ELit (LitInt 0) ->
-            [Warning Info (path <> ".expr") "expression is LitInt 0 (likely placeholder)"]
+            [Warning Warn (path <> ".expr") "expression is LitInt 0 (likely placeholder)"]
         EApp (EVar (Name "source" _)) [ELit (LitString _)] ->
-            [Warning Info (path <> ".expr") "expression is source text reference (not translated)"]
+            [Warning Warn (path <> ".expr") "expression is source text reference (not translated)"]
         _ -> []
 
 -- * Expressions

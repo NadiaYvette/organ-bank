@@ -96,7 +96,9 @@ data CoreFnDecl = CoreFnDecl
     { declIdent :: Text
     , declArity :: Int
     -- ^ Number of nested Abs nodes (0 for values)
-    , declIsRec :: Bool
+    , _declIsRec :: Bool
+    , declExprText :: Text
+    -- ^ Raw JSON text of the "expression" field
     }
 
 {- | Extract a top-level JSON string value by key.
@@ -116,10 +118,8 @@ extractJsonString key txt =
                             Just ('"', valRest) -> extractQuotedString valRest
                             -- Handle array of strings as module name (CoreFn uses array form)
                             Just ('[', arrRest) ->
-                                let trimmed = T.dropWhile (\c -> c == ' ' || c == '"' || c == '\n' || c == '\r' || c == '\t') arrRest
-                                 in case T.breakOn "\"" trimmed of
-                                        (modPart, _) ->
-                                            T.intercalate "." $
+                                let _trimmed = T.dropWhile (\c -> c == ' ' || c == '"' || c == '\n' || c == '\r' || c == '\t') arrRest
+                                 in T.intercalate "." $
                                                 T.splitOn "\",\"" $
                                                     T.filter (\c -> c /= ' ' && c /= '\n' && c /= '\r' && c /= '\t') $
                                                         takeUntilChar ']' (T.dropWhile (\c -> c == ' ' || c == '\n' || c == '\r' || c == '\t') arrRest)
@@ -203,14 +203,15 @@ parseDeclArray = go
              in case T.uncons stripped of
                     Nothing -> []
                     Just (']', _) -> []
-                    Just ('{', objRest) ->
+                    Just ('{', _objRest) ->
                         let (obj, afterObj) = extractBracedBlock '{' '}' stripped
                             bindType = extractJsonString "bindType" obj
                             decls
                                 | bindType == "NonRec" =
                                     let ident = extractJsonString "identifier" obj
                                         arity = countAbsNodes obj
-                                     in [CoreFnDecl ident arity False]
+                                        exprTxt = extractExprField obj
+                                     in [CoreFnDecl ident arity False exprTxt]
                                 | bindType == "Rec" = extractRecBinds obj
                                 | otherwise = []
                             rest = T.dropWhile (\c -> c == ' ' || c == ',' || c == '\n' || c == '\r' || c == '\t') afterObj
@@ -246,8 +247,9 @@ parseBindArray = go
                         let (obj, afterObj) = extractBracedBlock '{' '}' stripped
                             ident = extractJsonString "identifier" obj
                             arity = countAbsNodes obj
+                            exprTxt = extractExprField obj
                             rest = T.dropWhile (\c -> c == ' ' || c == ',' || c == '\n' || c == '\r' || c == '\t') afterObj
-                         in CoreFnDecl ident arity True : go rest
+                         in CoreFnDecl ident arity True exprTxt : go rest
                     Just (_, rest) -> go rest
 
 {- | Count nested Abs nodes in an expression to determine arity.
@@ -294,6 +296,399 @@ extractBracedBlock open close = go 0 T.empty False
             | otherwise -> go depth (acc <> T.singleton c) inString rest
 
 -- -----------------------------------------------------------------------
+-- Expression field extraction
+-- -----------------------------------------------------------------------
+
+{- | Extract the "expression" field value (a JSON object) from a declaration object.
+Finds "expression" key and extracts the braced block.
+-}
+extractExprField :: Text -> Text
+extractExprField obj =
+    let needle = "\"expression\""
+     in case T.breakOn needle obj of
+            (_, rest)
+                | T.null rest -> ""
+                | otherwise ->
+                    let afterKey = T.drop (T.length needle) rest
+                        afterColon = T.dropWhile (\c -> c == ' ' || c == ':' || c == '\n' || c == '\r' || c == '\t') afterKey
+                     in case T.uncons afterColon of
+                            Just ('{', _) -> fst (extractBracedBlock '{' '}' afterColon)
+                            _ -> ""
+
+-- -----------------------------------------------------------------------
+-- CoreFn expression parser
+-- -----------------------------------------------------------------------
+
+{- | Parse a CoreFn JSON expression into an OrganIR Expr.
+Falls back to @ELit (LitInt 0)@ for unrecognised shapes.
+-}
+parseCoreFnExpr :: Text -> Text -> IR.Expr
+parseCoreFnExpr modName_ txt
+    | T.null txt = IR.ELit (IR.LitInt 0)
+    | otherwise =
+        let exprType = extractJsonString "type" txt
+         in case exprType of
+                "Literal" -> parseLiteral txt
+                "Var" -> parseVar modName_ txt
+                "App" -> parseApp modName_ txt
+                "Abs" -> parseAbs modName_ txt
+                "Let" -> parseLet modName_ txt
+                "Case" -> parseCaseExpr modName_ txt
+                "Constructor" -> parseConstructor modName_ txt
+                "Accessor" -> parseAccessor modName_ txt
+                "ObjectUpdate" -> parseObjectUpdate modName_ txt
+                _ -> IR.ELit (IR.LitInt 0)
+
+-- | Parse a CoreFn Literal expression.
+parseLiteral :: Text -> IR.Expr
+parseLiteral txt =
+    let -- Find the "value" object inside the top-level object
+        valueObj = extractValueObject txt
+        litType = extractJsonString "literalType" valueObj
+     in case litType of
+            "IntLiteral" -> IR.ELit (IR.LitInt (extractJsonInt "value" valueObj))
+            "NumberLiteral" -> IR.ELit (IR.LitFloat (extractJsonDouble "value" valueObj))
+            "StringLiteral" -> IR.ELit (IR.LitString (extractJsonString "value" valueObj))
+            "BooleanLiteral" -> IR.ELit (IR.LitBool (extractJsonBool "value" valueObj))
+            "CharLiteral" -> IR.ELit (IR.LitString (extractJsonString "value" valueObj))
+            "ArrayLiteral" ->
+                let items = extractJsonExprArray "value" valueObj
+                 in IR.EList (map (parseCoreFnExpr "") items)
+            "ObjectLiteral" ->
+                -- Object literals: emit as a list of key-value pair applications
+                IR.EApp (IR.EVar (IR.Name "objectLiteral" 0)) []
+            _ -> IR.ELit (IR.LitInt 0)
+
+{- | Extract the "value" field as a JSON object from an expression node.
+CoreFn expressions have the shape {"type": "...", "value": {...}}.
+-}
+extractValueObject :: Text -> Text
+extractValueObject txt =
+    -- We need to find "value" that comes after "type", so skip past the type field first
+    case findValueField txt of
+            "" -> txt -- fallback: search in the whole thing
+            v -> v
+  where
+    findValueField t =
+        -- Find "type" first, skip past it, then find "value"
+        let typeNeedle = "\"type\""
+         in case T.breakOn typeNeedle t of
+                (_, rest)
+                    | T.null rest -> ""
+                    | otherwise ->
+                        let afterType = T.drop (T.length typeNeedle) rest
+                            -- skip past the type value string
+                            afterTypeVal = skipJsonValue (T.dropWhile (\c -> c == ' ' || c == ':' || c == '\n' || c == '\r' || c == '\t') afterType)
+                            -- now find "value" key
+                            valNeedle = "\"value\""
+                         in case T.breakOn valNeedle afterTypeVal of
+                                (_, vrest)
+                                    | T.null vrest -> ""
+                                    | otherwise ->
+                                        let afterKey = T.drop (T.length valNeedle) vrest
+                                            afterColon = T.dropWhile (\c -> c == ' ' || c == ':' || c == '\n' || c == '\r' || c == '\t') afterKey
+                                         in case T.uncons afterColon of
+                                                Just ('{', _) -> fst (extractBracedBlock '{' '}' afterColon)
+                                                -- For simple values (int, bool, string, array), return from colon onwards
+                                                _ -> afterColon
+
+-- | Skip past a single JSON value (string, number, object, array, bool, null).
+skipJsonValue :: Text -> Text
+skipJsonValue txt = case T.uncons txt of
+    Nothing -> txt
+    Just ('"', rest) ->
+        -- skip string
+        let afterStr = dropQuotedString rest
+         in afterStr
+    Just ('{', _) ->
+        -- skip object
+        snd (extractBracedBlock '{' '}' txt)
+    Just ('[', _) ->
+        -- skip array
+        snd (extractBracedBlock '[' ']' txt)
+    Just (c, _)
+        | c == 't' -> T.drop 4 txt -- true
+        | c == 'f' -> T.drop 5 txt -- false
+        | c == 'n' -> T.drop 4 txt -- null
+        | c == '-' || (c >= '0' && c <= '9') ->
+            T.dropWhile (\ch -> ch >= '0' && ch <= '9' || ch == '.' || ch == '-' || ch == 'e' || ch == 'E' || ch == '+') txt
+        | otherwise -> txt
+
+-- | Drop the contents of a quoted string (we're past the opening quote).
+dropQuotedString :: Text -> Text
+dropQuotedString txt = case T.uncons txt of
+    Nothing -> txt
+    Just ('\\', rest) -> case T.uncons rest of
+        Just (_, rest') -> dropQuotedString rest'
+        Nothing -> rest
+    Just ('"', rest) -> rest
+    Just (_, rest) -> dropQuotedString rest
+
+-- | Parse a CoreFn Var expression.
+parseVar :: Text -> Text -> IR.Expr
+parseVar _modName_ txt =
+    let valueObj = extractValueObject txt
+        ident = extractJsonString "identifier" valueObj
+     in if T.null ident
+            then IR.ELit (IR.LitInt 0)
+            else IR.EVar (IR.Name ident 0)
+
+-- | Parse a CoreFn App expression.
+parseApp :: Text -> Text -> IR.Expr
+parseApp modName_ txt =
+    let valueObj = extractValueObject txt
+        absExprTxt = extractInnerExprField "abstraction" valueObj
+        argExprTxt = extractInnerExprField "argument" valueObj
+        absExpr = parseCoreFnExpr modName_ absExprTxt
+        argExpr = parseCoreFnExpr modName_ argExprTxt
+     in case absExpr of
+            -- Collapse nested single-arg applications: (f a) b -> EApp f [a, b]
+            IR.EApp f args -> IR.EApp f (args ++ [argExpr])
+            _ -> IR.EApp absExpr [argExpr]
+
+-- | Parse a CoreFn Abs (lambda) expression.
+parseAbs :: Text -> Text -> IR.Expr
+parseAbs modName_ txt =
+    let valueObj = extractValueObject txt
+        arg = extractJsonString "argument" valueObj
+        bodyTxt = extractInnerExprField "body" valueObj
+        bodyExpr = parseCoreFnExpr modName_ bodyTxt
+     in case bodyExpr of
+            -- Collapse nested lambdas: \x -> \y -> e  =>  ELam [x, y] e
+            IR.ELam params inner ->
+                IR.ELam (IR.LamParam (IR.Name arg 0) Nothing : params) inner
+            _ ->
+                IR.ELam [IR.LamParam (IR.Name arg 0) Nothing] bodyExpr
+
+-- | Parse a CoreFn Let expression.
+parseLet :: Text -> Text -> IR.Expr
+parseLet modName_ txt =
+    let valueObj = extractValueObject txt
+        bindsArr = extractJsonArray "binds" valueObj
+        bodyTxt = extractInnerExprField "expression" valueObj
+        bodyExpr = parseCoreFnExpr modName_ bodyTxt
+        irBinds = concatMap (parseLetBind modName_) bindsArr
+     in IR.ELet irBinds bodyExpr
+
+-- | Parse a single let binding from CoreFn.
+parseLetBind :: Text -> Text -> [IR.LetBind]
+parseLetBind modName_ bindTxt =
+    let bindType = extractJsonString "bindType" bindTxt
+     in if bindType == "Rec"
+            then
+                let bindsArr = extractJsonArray "binds" bindTxt
+                 in map (parseSingleBind modName_) bindsArr
+            else [parseSingleBind modName_ bindTxt]
+
+-- | Parse a single name-expression bind.
+parseSingleBind :: Text -> Text -> IR.LetBind
+parseSingleBind modName_ bindTxt =
+    let ident = extractJsonString "identifier" bindTxt
+        exprTxt = extractExprField bindTxt
+        expr = parseCoreFnExpr modName_ exprTxt
+     in IR.LetBind (IR.Name ident 0) Nothing expr
+
+-- | Parse a CoreFn Case expression.
+parseCaseExpr :: Text -> Text -> IR.Expr
+parseCaseExpr modName_ txt =
+    let valueObj = extractValueObject txt
+        scrutinees = extractJsonExprArray "caseExpressions" valueObj
+        alternatives = extractJsonArray "caseAlternatives" valueObj
+        -- For now, we take the first scrutinee (PureScript Case usually has one)
+        scrutExpr = case scrutinees of
+            (s : _) -> parseCoreFnExpr modName_ s
+            [] -> IR.ELit (IR.LitInt 0)
+        branches = map (parseCaseAlt modName_) alternatives
+     in IR.ECase scrutExpr branches
+
+-- | Parse a case alternative.
+parseCaseAlt :: Text -> Text -> IR.Branch
+parseCaseAlt modName_ altTxt =
+    let -- Extract the body expression (either "expression" or "isGuarded" alternatives)
+        isGuarded = extractJsonBool "isGuarded" altTxt
+        bodyExpr
+            | isGuarded =
+                -- Guarded case: fall back to first guard body or placeholder
+                IR.ELit (IR.LitInt 0)
+            | otherwise =
+                let exprTxt = extractInnerExprField "expression" altTxt
+                 in parseCoreFnExpr modName_ exprTxt
+        -- Extract patterns (array of binders)
+        binders = extractJsonArray "binders" altTxt
+        pat = case binders of
+            (b : _) -> parseBinder b
+            [] -> IR.PatWild
+     in IR.Branch pat bodyExpr
+
+-- | Parse a CoreFn binder (pattern).
+parseBinder :: Text -> IR.Pat
+parseBinder txt =
+    let binderType = extractJsonString "binderType" txt
+     in case binderType of
+            "NullBinder" -> IR.PatWild
+            "VarBinder" ->
+                let ident = extractJsonString "identifier" txt
+                 in IR.PatVar (IR.Name ident 0) Nothing
+            "LiteralBinder" ->
+                let valueObj = extractValueObject txt
+                    litType = extractJsonString "literalType" valueObj
+                 in case litType of
+                        "IntLiteral" -> IR.PatLit (IR.LitInt (extractJsonInt "value" valueObj))
+                        "StringLiteral" -> IR.PatLit (IR.LitString (extractJsonString "value" valueObj))
+                        "BooleanLiteral" -> IR.PatLit (IR.LitBool (extractJsonBool "value" valueObj))
+                        "NumberLiteral" -> IR.PatLit (IR.LitFloat (extractJsonDouble "value" valueObj))
+                        "CharLiteral" -> IR.PatLit (IR.LitString (extractJsonString "value" valueObj))
+                        _ -> IR.PatWild
+            "ConstructorBinder" ->
+                let ctorName = extractJsonString "constructorName" txt
+                    binderArgs = extractJsonArray "binders" txt
+                    patBinders = map binderToPatBinder binderArgs
+                 in IR.PatCon (IR.QName "" (IR.Name ctorName 0)) patBinders
+            "NamedBinder" ->
+                let ident = extractJsonString "identifier" txt
+                 in IR.PatVar (IR.Name ident 0) Nothing
+            _ -> IR.PatWild
+
+-- | Convert a binder JSON to a PatBinder (for constructor args).
+binderToPatBinder :: Text -> IR.PatBinder
+binderToPatBinder txt =
+    let binderType = extractJsonString "binderType" txt
+        ident = case binderType of
+            "VarBinder" -> extractJsonString "identifier" txt
+            "NamedBinder" -> extractJsonString "identifier" txt
+            _ -> "_"
+     in IR.PatBinder (IR.Name ident 0) Nothing
+
+-- | Parse a CoreFn Constructor expression.
+parseConstructor :: Text -> Text -> IR.Expr
+parseConstructor modName_ txt =
+    let valueObj = extractValueObject txt
+        _typeName = extractJsonString "typeName" valueObj
+        ctorName = extractJsonString "constructorName" valueObj
+        _fieldNames = extractJsonStringArray "fieldNames" valueObj
+     in IR.ECon (IR.QName modName_ (IR.Name ctorName 0)) []
+
+-- | Parse a CoreFn Accessor expression (record field access).
+parseAccessor :: Text -> Text -> IR.Expr
+parseAccessor modName_ txt =
+    let valueObj = extractValueObject txt
+        fieldName = extractJsonString "fieldName" valueObj
+        exprTxt = extractInnerExprField "expression" valueObj
+        innerExpr = parseCoreFnExpr modName_ exprTxt
+     in IR.EApp (IR.EVar (IR.Name "accessor" 0)) [IR.ELit (IR.LitString fieldName), innerExpr]
+
+-- | Parse a CoreFn ObjectUpdate expression.
+parseObjectUpdate :: Text -> Text -> IR.Expr
+parseObjectUpdate modName_ txt =
+    let valueObj = extractValueObject txt
+        exprTxt = extractInnerExprField "expression" valueObj
+        innerExpr = parseCoreFnExpr modName_ exprTxt
+     in IR.EApp (IR.EVar (IR.Name "objectUpdate" 0)) [innerExpr]
+
+-- -----------------------------------------------------------------------
+-- Additional JSON extraction helpers
+-- -----------------------------------------------------------------------
+
+{- | Extract a named field that contains a JSON expression object.
+Returns the braced JSON text of the expression.
+-}
+extractInnerExprField :: Text -> Text -> Text
+extractInnerExprField key txt =
+    let needle = "\"" <> key <> "\""
+     in case T.breakOn needle txt of
+            (_, rest)
+                | T.null rest -> ""
+                | otherwise ->
+                    let afterKey = T.drop (T.length needle) rest
+                        afterColon = T.dropWhile (\c -> c == ' ' || c == ':' || c == '\n' || c == '\r' || c == '\t') afterKey
+                     in case T.uncons afterColon of
+                            Just ('{', _) -> fst (extractBracedBlock '{' '}' afterColon)
+                            _ -> ""
+
+-- | Extract a JSON integer value by key.
+extractJsonInt :: Text -> Text -> Integer
+extractJsonInt key txt =
+    let needle = "\"" <> key <> "\""
+     in case T.breakOn needle txt of
+            (_, rest)
+                | T.null rest -> 0
+                | otherwise ->
+                    let afterKey = T.drop (T.length needle) rest
+                        afterColon = T.dropWhile (\c -> c == ' ' || c == ':' || c == '\n' || c == '\r' || c == '\t') afterKey
+                        numText = T.takeWhile (\c -> c >= '0' && c <= '9' || c == '-') afterColon
+                     in case reads (T.unpack numText) of
+                            ((n, _) : _) -> n
+                            _ -> 0
+
+-- | Extract a JSON floating point value by key.
+extractJsonDouble :: Text -> Text -> Double
+extractJsonDouble key txt =
+    let needle = "\"" <> key <> "\""
+     in case T.breakOn needle txt of
+            (_, rest)
+                | T.null rest -> 0.0
+                | otherwise ->
+                    let afterKey = T.drop (T.length needle) rest
+                        afterColon = T.dropWhile (\c -> c == ' ' || c == ':' || c == '\n' || c == '\r' || c == '\t') afterKey
+                        numText = T.takeWhile (\c -> c >= '0' && c <= '9' || c == '-' || c == '.' || c == 'e' || c == 'E' || c == '+') afterColon
+                     in case reads (T.unpack numText) of
+                            ((n, _) : _) -> n
+                            _ -> 0.0
+
+-- | Extract a JSON boolean value by key.
+extractJsonBool :: Text -> Text -> Bool
+extractJsonBool key txt =
+    let needle = "\"" <> key <> "\""
+     in case T.breakOn needle txt of
+            (_, rest)
+                | T.null rest -> False
+                | otherwise ->
+                    let afterKey = T.drop (T.length needle) rest
+                        afterColon = T.dropWhile (\c -> c == ' ' || c == ':' || c == '\n' || c == '\r' || c == '\t') afterKey
+                     in T.isPrefixOf "true" afterColon
+
+{- | Extract a JSON array of objects/expressions by key.
+Returns a list of the raw JSON text for each element.
+-}
+extractJsonArray :: Text -> Text -> [Text]
+extractJsonArray key txt =
+    let needle = "\"" <> key <> "\""
+     in case T.breakOn needle txt of
+            (_, rest)
+                | T.null rest -> []
+                | otherwise ->
+                    let afterKey = T.drop (T.length needle) rest
+                        afterColon = T.dropWhile (\c -> c == ' ' || c == ':' || c == '\n' || c == '\r' || c == '\t') afterKey
+                     in case T.uncons afterColon of
+                            Just ('[', arrBody) -> parseObjectArray arrBody
+                            _ -> []
+
+{- | Extract a JSON array of expression objects by key.
+Same as extractJsonArray but handles the case where elements are objects.
+-}
+extractJsonExprArray :: Text -> Text -> [Text]
+extractJsonExprArray = extractJsonArray
+
+-- | Parse an array body containing JSON objects, returning each object as text.
+parseObjectArray :: Text -> [Text]
+parseObjectArray = go . T.strip
+  where
+    go txt
+        | T.null txt = []
+        | otherwise = case T.uncons txt of
+            Nothing -> []
+            Just (']', _) -> []
+            Just ('{', _) ->
+                let (obj, afterObj) = extractBracedBlock '{' '}' txt
+                    rest = T.dropWhile (\c -> c == ' ' || c == ',' || c == '\n' || c == '\r' || c == '\t') afterObj
+                 in obj : go rest
+            Just ('[', _) ->
+                let (arr, afterArr) = extractBracedBlock '[' ']' txt
+                    rest = T.dropWhile (\c -> c == ' ' || c == ',' || c == '\n' || c == '\r' || c == '\t') afterArr
+                 in arr : go rest
+            Just (_, rest) -> go rest
+
+-- -----------------------------------------------------------------------
 -- OrganIR emission (via organ-ir library)
 -- -----------------------------------------------------------------------
 
@@ -309,14 +704,6 @@ declToIR modName_ uniq decl =
                     IR.pureEffect
                     IR.TAny
             | otherwise = IR.TAny
-        expr
-            | arity > 0 =
-                IR.ELam
-                    ( map
-                        (\i -> IR.LamParam (IR.Name ("$" <> T.pack (show i)) 0) Nothing)
-                        [1 .. arity]
-                    )
-                    (IR.ELit (IR.LitInt 0))
-            | otherwise = IR.ELit (IR.LitInt 0)
+        expr = parseCoreFnExpr modName_ (declExprText decl)
         sort = if arity > 0 then IR.SFun else IR.SVal
      in IR.Definition qname ty expr sort IR.Public arity

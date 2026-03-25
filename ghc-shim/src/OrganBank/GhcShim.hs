@@ -22,7 +22,7 @@ import GHC.Types.Literal (Literal (..), LitNumType (..))
 import GHC.Types.Name (getOccString, nameModule_maybe)
 import GHC.Types.Name qualified as GN
 import GHC.Types.Unique (getKey)
-import GHC.Types.Var (Var, varName, varType, isTyVar)
+import GHC.Types.Var (Var, varName, varType, isTyVar, binderVar, isInvisibleFunArg, ForAllTyBinder)
 import GHC.Unit.Module.ModGuts (mg_binds)
 import OrganIR.Build qualified as IR
 import OrganIR.Json (renderOrganIR)
@@ -264,13 +264,19 @@ translateLit (LitRubbish _ _)      = IR.LitString "rubbish"
 
 -- | Translate a GHC Type to OrganIR Ty.
 translateType :: Type -> IR.Ty
-translateType (FunTy _flag _mult arg res) =
-    case translateType res of
-      -- Accumulate function arguments into a single TFn
-      IR.TFn args eff retTy ->
-          IR.TFn (IR.FnArg Nothing (translateType arg) : args) eff retTy
-      resTy ->
-          IR.TFn [IR.FnArg Nothing (translateType arg)] (IR.EffectRow [] Nothing) resTy
+translateType (FunTy flag _mult arg res)
+    -- Dictionary (constraint) arguments: skip them in the function signature
+    -- FTF_T_C = argument is Type, result is Constraint (dict arg in Core)
+    -- FTF_C_T = argument is Constraint, result is Type
+    -- FTF_C_C = both Constraint
+    | isInvisibleFunArg flag = translateType res
+    | otherwise =
+        case translateType res of
+          -- Accumulate function arguments into a single TFn
+          IR.TFn args eff retTy ->
+              IR.TFn (IR.FnArg Nothing (translateType arg) : args) eff retTy
+          resTy ->
+              IR.TFn [IR.FnArg Nothing (translateType arg)] (IR.EffectRow [] Nothing) resTy
 
 translateType (TyConApp tc []) =
     let n = tyConName tc
@@ -296,19 +302,38 @@ translateType (TyVarTy v) =
         uniq  = getKey (GN.nameUnique n)
     in IR.TVar (IR.Name nameT (fromIntegral uniq))
 
-translateType (ForAllTy _bndr ty) =
-    -- Simplification: skip the binder, just translate inner type
-    -- A full translation would collect forall binders into TForall
-    translateType ty
+translateType (ForAllTy bndr ty) =
+    let (bndrs, innerTy) = collectForAlls ty
+        allBndrs = bndr : bndrs
+        tvs = map forAllBndrToTyVar allBndrs
+    in IR.TForall tvs (translateType innerTy)
 
 translateType (AppTy t1 t2) =
-    -- Type application that isn't TyConApp; fall back to TAny
-    -- since OrganIR TApp requires a QName head
-    case translateType t1 of
-      IR.TCon qn -> IR.TApp qn [translateType t2]
-      IR.TApp qn args -> IR.TApp qn (args ++ [translateType t2])
-      _ -> IR.TAny
+    -- Collect nested AppTy into a single TApp when the head is a known type
+    case collectAppTy t1 [translateType t2] of
+      (IR.TCon qn, args) -> IR.TApp qn args
+      (IR.TApp qn existingArgs, args) -> IR.TApp qn (existingArgs ++ args)
+      _ -> IR.TAny  -- truly unknown head (e.g. type variable application)
 
 translateType (LitTy _)      = IR.TAny
 translateType (CastTy t _)   = translateType t
 translateType (CoercionTy _) = IR.TAny
+
+-- | Collect nested ForAllTy binders.
+collectForAlls :: Type -> ([ForAllTyBinder], Type)
+collectForAlls (ForAllTy b t) = let (bs, inner) = collectForAlls t in (b : bs, inner)
+collectForAlls t = ([], t)
+
+-- | Convert a ForAllTyBinder to an OrganIR TyVar.
+forAllBndrToTyVar :: ForAllTyBinder -> IR.TyVar
+forAllBndrToTyVar bndr =
+    let tv = binderVar bndr
+        n  = varName tv
+        nameT = T.pack (getOccString n)
+        uniq  = getKey (GN.nameUnique n)
+    in IR.TyVar (IR.Name nameT (fromIntegral uniq)) Nothing
+
+-- | Collect nested AppTy into the translated head and accumulated args.
+collectAppTy :: Type -> [IR.Ty] -> (IR.Ty, [IR.Ty])
+collectAppTy (AppTy t1 t2) acc = collectAppTy t1 (translateType t2 : acc)
+collectAppTy t acc = (translateType t, acc)

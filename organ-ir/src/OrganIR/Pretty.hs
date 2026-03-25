@@ -1,5 +1,5 @@
 -- | Human-readable pretty-printer for OrganIR documents.
-module OrganIR.Pretty (ppOrganIR, ppDefinition, ppExpr, ppTy) where
+module OrganIR.Pretty (ppOrganIR, ppDefinition, ppExpr, ppTy, ppDataType, ppEffectDecl) where
 
 import Data.Text (Text)
 import Data.Text qualified as T
@@ -22,7 +22,10 @@ ppOrganIR ir =
                 )
                     : maybe [] (\sf -> ["-- source: " <> sf]) (metaSourceFile meta)
         defs = T.intercalate "\n\n" (map ppDefinition (modDefs m))
-     in header <> "\n" <> defs <> "\n"
+        dts = T.intercalate "\n\n" (map ppDataType (modDataTypes m))
+        effs = T.intercalate "\n\n" (map ppEffectDecl (modEffectDecls m))
+        sections = filter (not . T.null) [defs, dts, effs]
+     in header <> "\n" <> T.intercalate "\n\n" sections <> "\n"
 
 -- | Pretty-print a source language tag.
 ppSourceLang :: SourceLang -> Text
@@ -194,6 +197,34 @@ ppQName :: QName -> Text
 ppQName qn
     | T.null (qnModule qn) = ppName (qnName qn)
     | otherwise = qnModule qn <> "." <> ppName (qnName qn)
+
+-- | Pretty-print a data type declaration.
+ppDataType :: DataType -> Text
+ppDataType dt =
+    let params = case dtTypeParams dt of
+            [] -> ""
+            tvs -> " " <> T.unwords (map ppTyVar tvs)
+        constrs = map ppConstructor (dtConstructors dt)
+     in "data " <> ppQName (dtName dt) <> params <> "\n  = " <> T.intercalate "\n  | " constrs
+
+-- | Pretty-print a constructor.
+ppConstructor :: Constructor -> Text
+ppConstructor con = case conFields con of
+    [] -> ppQName (conName con)
+    fs -> ppQName (conName con) <> "(" <> T.intercalate ", " (map ppTy fs) <> ")"
+
+-- | Pretty-print an effect declaration.
+ppEffectDecl :: EffectDecl -> Text
+ppEffectDecl ed =
+    let params = case edTypeParams ed of
+            [] -> ""
+            tvs -> " " <> T.unwords (map ppTyVar tvs)
+        ops = map ppOperation (edOperations ed)
+     in "effect " <> ppQName (edName ed) <> params <> "\n  " <> T.intercalate "\n  " ops
+
+-- | Pretty-print an effect operation.
+ppOperation :: Operation -> Text
+ppOperation op = opName op <> " : " <> ppTy (opType op)
 
 -- | Pretty-print a name, appending @#unique@ if unique > 0.
 ppName :: Name -> Text

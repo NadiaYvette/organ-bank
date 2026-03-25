@@ -56,17 +56,17 @@ run_test "fortran-shim/hello.f90"       fortran-organ    "$EXAMPLES/hello.f90"  
 run_test "ada-shim/hello.adb"           ada-organ        "$EXAMPLES/hello.adb"      gnat
 run_test "ocaml-shim/hello.ml"          ocaml-organ      "$EXAMPLES/hello.ml"       ocamlopt
 run_test "sml-shim/hello.sml"           sml-organ        "$EXAMPLES/hello.sml"      mlton
-run_test "koka-shim/hello.sml"          koka-organ       "$EXAMPLES/hello.sml"      koka
+run_test "koka-shim/hello.kk"           koka-organ       "$EXAMPLES/hello.kk"       koka
 run_test "erlc-shim/hello.erl"          erlc-organ       "$EXAMPLES/hello.erl"      erlc
 run_test "mmc-shim/hello.pl"            mmc-organ        "$EXAMPLES/hello.pl"       mmc
 run_test "prolog-shim/hello.pl"         prolog-organ     "$EXAMPLES/hello.pl"       gplc
 run_test "scheme-shim/hello.scm"        scheme-organ     "$EXAMPLES/hello.scm"      guile
-run_test "idris2-shim/hello.hs"         idris2-organ     "$EXAMPLES/hello.hs"       idris2
-run_test "purs-shim/hello.hs"           purs-organ       "$EXAMPLES/hello.hs"       purs
-run_test "agda-shim/hello.hs"           agda-organ       "$EXAMPLES/hello.hs"       agda
-run_test "fsharp-shim/hello.ml"         fsharp-organ     "$EXAMPLES/hello.ml"       dotnet
-run_test "scala3-shim/hello.ml"         scala3-organ     "$EXAMPLES/hello.ml"       scala
-run_test "swift-shim/hello.c"           swift-organ      "$EXAMPLES/hello.c"        swiftc
+run_test "idris2-shim/hello.idr"        idris2-organ     "$EXAMPLES/hello.idr"      idris2
+run_test "purs-shim/hello.purs"         purs-organ       "$EXAMPLES/hello.purs"     purs
+run_test "agda-shim/hello.agda"         agda-organ       "$EXAMPLES/hello.agda"     agda
+run_test "fsharp-shim/hello.fsx"        fsharp-organ     "$EXAMPLES/hello.fsx"      dotnet
+run_test "scala3-shim/hello.scala"      scala3-organ     "$EXAMPLES/hello.scala"    scala
+run_test "swift-shim/hello.swift"       swift-organ      "$EXAMPLES/hello.swift"    swiftc
 
 echo ""
 echo "=== Results ==="

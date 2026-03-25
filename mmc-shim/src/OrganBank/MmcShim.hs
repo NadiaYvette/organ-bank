@@ -65,6 +65,7 @@ data HldsPred = HldsPred
     , predArity :: Int
     , predDet :: String -- "det", "semidet", "multi", "nondet", "erroneous", "failure"
     , predModes :: [String] -- mode declarations
+    , predClauseText :: String -- raw clause body text from HLDS
     }
     deriving (Show)
 
@@ -81,8 +82,8 @@ extractPreds (l : ls)
         let predDecl = drop 8 stripped -- drop ":- pred "
             (name', rest) = break (== '(') predDecl
             arity = countArgs rest
-            (det, modes, remaining) = findDetAndModes ls
-         in HldsPred (trim name') arity det modes : extractPreds remaining
+            (det, modes, clauseText, remaining) = findDetAndModes ls
+         in HldsPred (trim name') arity det modes clauseText : extractPreds remaining
     | otherwise = extractPreds ls
   where
     stripped = dropWhile isSpace l
@@ -94,12 +95,24 @@ countArgs s =
             then 0
             else length (filter (== ',') inner) + 1
 
-findDetAndModes :: [String] -> (String, [String], [String])
+findDetAndModes :: [String] -> (String, [String], String, [String])
 findDetAndModes ls =
     let (block, rest) = span (\l' -> not (":- pred " `isPrefixOf` dropWhile isSpace l') && not (null l')) ls
         det = findDet block
         modes = findModes block
-     in (det, modes, rest)
+        clauseText = findClauseText block
+     in (det, modes, clauseText, rest)
+
+-- | Extract clause body text from a predicate block in the HLDS dump.
+findClauseText :: [String] -> String
+findClauseText ls =
+    let clauseLines = [trim l | l <- ls
+                       , not (":- mode " `isPrefixOf` dropWhile isSpace l)
+                       , not (":- pred " `isPrefixOf` dropWhile isSpace l)
+                       , not ("is " `isPrefixOf` dropWhile isSpace l && any (`isInfixOf'` l) ["is det", "is semidet", "is multi", "is nondet", "is erroneous", "is failure"])
+                       , not (null (trim l))
+                       ]
+     in unlines clauseLines
 
 findDet :: [String] -> String
 findDet [] = "det"
@@ -135,17 +148,31 @@ detToEffectRow "erroneous" = IR.EffectRow [IR.qualName "std" "exn"] Nothing
 detToEffectRow "failure" = IR.EffectRow [IR.qualName "std" "exn"] Nothing
 detToEffectRow _ = IR.pureEffect
 
+-- | Determine multiplicity from Mercury modes.
+-- Mercury "unique" and "clobbered" modes indicate affine usage.
+modeMultiplicity :: [String] -> IR.Multiplicity
+modeMultiplicity modes
+    | any (\m -> "unique" `isInfixOf'` m || "clobbered" `isInfixOf'` m) modes = IR.Affine
+    | otherwise = IR.Many
+
 -- | Convert a parsed HLDS predicate to an OrganIR definition.
 predToIR :: Int -> HldsPred -> IR.Definition
 predToIR uid pred' =
-    IR.Definition
+    let mult = modeMultiplicity (predModes pred')
+        clauseTxt = T.pack (predClauseText pred')
+        bodyExpr
+            | T.null (T.strip clauseTxt) =
+                IR.EApp (IR.eVar "hlds_clause") [IR.eString "<empty>"]
+            | otherwise =
+                IR.EApp (IR.eVar "hlds_clause") [IR.eString clauseTxt]
+     in IR.Definition
         { IR.defName = IR.QName "" (IR.Name (T.pack (predName pred')) uid)
         , IR.defType =
             IR.TFn
-                (replicate (predArity pred') (IR.FnArg (Just IR.Many) IR.TAny))
+                (replicate (predArity pred') (IR.FnArg (Just mult) IR.TAny))
                 (detToEffectRow (predDet pred'))
                 IR.TAny
-        , IR.defExpr = IR.ELit (IR.LitInt 0)
+        , IR.defExpr = bodyExpr
         , IR.defSort = IR.SFun
         , IR.defVisibility = IR.Public
         , IR.defArity = predArity pred'

@@ -908,8 +908,8 @@ exprToIR (SELet n bound body) = IR.ELet [IR.LetBind (IR.name n) Nothing (exprToI
 exprToIR (SENew n args) = IR.ECon (IR.localName n) (map exprToIR args)
 exprToIR (SEBlock es) = IR.eSeq (map exprToIR es)
 exprToIR (SEUnparsed t)
-    | T.null t = IR.ELit (IR.LitInt 0)
-    | otherwise = IR.ELit (IR.LitString t)
+    | T.null t = IR.EApp (IR.eVar "unparsed") [IR.eString "<empty>"]
+    | otherwise = IR.EApp (IR.eVar "unparsed") [IR.eString t]
 
 -- | Translate a variable name, handling qualified names like "Module.name".
 varToIR :: Text -> IR.Expr

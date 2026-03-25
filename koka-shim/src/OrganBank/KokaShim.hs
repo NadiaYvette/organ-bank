@@ -352,7 +352,7 @@ defToIR d =
   where
     effectRow =
         IR.EffectRow
-            (map IR.localName (filter (/= "pure") (odEffects d)))
+            (map (\e -> IR.qualName "koka" e) (filter (/= "pure") (odEffects d)))
             Nothing
     retTy = IR.tCon (odReturnType d)
     defType_

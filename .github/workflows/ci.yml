@@ -37,3 +37,14 @@ jobs:
 
       - name: Build ghc-shim (GHC 9.14)
         run: cabal --project-file=cabal-ghc914.project build ghc-shim
+
+      - name: Run frontend smoke tests
+        run: |
+          set -e
+          run_fe() { echo "Testing $1..."; cabal -v0 run "$1" -- "$2" | cabal -v0 run organ-validate -- /dev/stdin; }
+          run_fe sml-organ-fe     test/examples/hello.sml
+          run_fe erlang-organ-fe  test/examples/hello.erl
+          run_fe prolog-organ-fe  test/examples/hello.pl
+          run_fe scheme-organ-fe  test/examples/hello.scm
+          run_fe lua-organ-fe     test/examples/hello.lua
+          run_fe forth-organ-fe   test/examples/hello.fth

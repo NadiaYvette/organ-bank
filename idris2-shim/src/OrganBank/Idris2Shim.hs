@@ -64,6 +64,7 @@ data Idris2Def = Idris2Def
     { idris2DefName :: String -- fully qualified name
     , idris2DefArity :: Int -- number of lambda parameters
     , idris2DefHasCase :: Bool -- whether body contains case expressions
+    , idris2DefBodyText :: String -- raw case tree text
     }
     deriving (Show)
 
@@ -88,7 +89,8 @@ extractDefs (l : ls)
         let (body, rest) = spanBody ls
             arity = countLambdas body
             hasCase = any (("case " `isPrefixOf`) . dropWhile isSpace) body
-         in Idris2Def defn arity hasCase : extractDefs rest
+            bodyText = unlines body
+         in Idris2Def defn arity hasCase bodyText : extractDefs rest
     | otherwise = extractDefs ls
   where
     stripped = dropWhile isSpace l
@@ -101,7 +103,7 @@ isSuffixOf' suffix s =
      in m >= n && drop (m - n) s == suffix
 
 spanBody :: [String] -> ([String], [String])
-spanBody = span (\l -> null l || isSpace (head l))
+spanBody = span (\l -> case l of { [] -> True; (c:_) -> isSpace c })
 
 countLambdas :: [String] -> Int
 countLambdas ls =
@@ -116,10 +118,18 @@ defToIR uid def' =
         ty
             | arity == 0 = IR.TAny
             | otherwise = IR.TFn (replicate arity (IR.FnArg (Just IR.Many) IR.TAny)) IR.pureEffect IR.TAny
+        bodyText = T.pack (idris2DefBodyText def')
+        bodyExpr
+            | idris2DefHasCase def' =
+                IR.EApp (IR.eVar "case_tree") [IR.eString bodyText]
+            | T.null (T.strip bodyText) =
+                IR.EApp (IR.eVar "case_tree") [IR.eString "<empty>"]
+            | otherwise =
+                IR.EApp (IR.eVar "case_tree") [IR.eString bodyText]
      in IR.Definition
             { IR.defName = qname
             , IR.defType = ty
-            , IR.defExpr = IR.ELit (IR.LitInt 0)
+            , IR.defExpr = bodyExpr
             , IR.defSort = IR.SFun
             , IR.defVisibility = IR.Public
             , IR.defArity = arity

@@ -17,7 +17,6 @@ module OrganBank.ErlcShim (
 
 import Control.Exception qualified
 import Data.Char (isSpace)
-import Data.List (isInfixOf)
 import Data.Text (Text)
 import Data.Text qualified as T
 import OrganIR.Build qualified as IR
@@ -72,14 +71,12 @@ tryReadFile fp = do
     pure $ either (const Nothing) Just result
 
 -- | Convert a CoreFun to an OrganIR Definition.
+-- All Erlang functions are marked pure: side effects happen via message passing,
+-- not visible at the Core Erlang level.
 coreFunToDef :: CoreFun -> IR.Definition
 coreFunToDef fun =
     let arity = cfArity fun
-        effectRow
-            | isEffectful (cfBody fun) =
-                IR.EffectRow [IR.qualName "std" "io"] Nothing
-            | otherwise = IR.pureEffect
-        ty = IR.TFn (replicate arity (IR.FnArg (Just IR.Many) IR.TAny)) effectRow IR.TAny
+        ty = IR.TFn (replicate arity (IR.FnArg (Just IR.Many) IR.TAny)) IR.pureEffect IR.TAny
         body = IR.EApp (IR.eVar "source") [IR.eString (T.pack (cfBody fun))]
      in IR.Definition
             { IR.defName = IR.localName (T.pack (cfName fun))
@@ -157,39 +154,3 @@ collectBody (l : ls)
                 -- End of module
                 _ | "end" == dropWhile isSpace s -> True
                 _ -> False
-
-{- | Determine if a function body looks effectful.
-In Erlang, most functions are effectful. We mark as "pure" only
-functions whose body does not contain obvious IO indicators.
--}
-isEffectful :: String -> Bool
-isEffectful body = any (`isInfixOf` body) ioIndicators
-  where
-    ioIndicators =
-        [ "call 'erlang':'send'"
-        , "call 'erlang':'!':"
-        , "'receive'"
-        , "call 'io':"
-        , "call 'file':"
-        , "call 'gen_server':"
-        , "call 'gen_statem':"
-        , "call 'ets':"
-        , "call 'dets':"
-        , "call 'mnesia':"
-        , "call 'erlang':'put'"
-        , "call 'erlang':'get'"
-        , "call 'erlang':'erase'"
-        , "call 'erlang':'self'"
-        , "call 'erlang':'spawn'"
-        , "call 'erlang':'register'"
-        , "call 'erlang':'process_flag'"
-        , "call 'erlang':'port_command'"
-        , "call 'erlang':'open_port'"
-        , "call 'erlang':'halt'"
-        , "call 'erlang':'exit'"
-        , "call 'erlang':'throw'"
-        , "call 'erlang':'error'"
-        , "call 'erlang':'display'"
-        , "receive"
-        , "primop" -- many primops are effectful
-        ]
