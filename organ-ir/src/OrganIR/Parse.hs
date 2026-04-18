@@ -27,7 +27,7 @@ type P a = Text -> Either Text (a, Text)
 
 -- | Maximum nesting depth for JSON parsing to prevent stack overflow.
 maxNestingDepth :: Int
-maxNestingDepth = 200
+maxNestingDepth = 2000
 
 parseJSON :: Text -> Either Text JVal
 parseJSON t = do
